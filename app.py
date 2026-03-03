@@ -446,7 +446,16 @@ def main() -> None:
                         text=True,
                     )
                     try:
-                        payload = json.loads(result.stdout.strip())
+                        out = result.stdout.strip()
+                        # Use last JSON line in stdout (ignore WARN lines)
+                        json_line = ""
+                        for line in out.splitlines()[::-1]:
+                            if line.strip().startswith("{") and line.strip().endswith("}"):
+                                json_line = line.strip()
+                                break
+                        if not json_line:
+                            json_line = out
+                        payload = json.loads(json_line)
                         st.session_state["sales_snapshot"] = {
                             "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "date": payload.get("date", "-"),
