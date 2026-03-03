@@ -4,6 +4,7 @@
 
 ## 구성
 - `scripts/ezadmin_stock_sync.py`: 재고 수집 및 시트 업데이트
+- `scripts/sales_snapshot.py`: 당일 매출 수량 스냅샷 (카페24/쿠팡)
 - `app.py`: Streamlit 대시보드
 - `.streamlit/secrets.toml`: 비밀키 (Git 제외)
 - `.streamlit/secrets.example.toml`: 예시 템플릿
