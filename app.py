@@ -6,6 +6,9 @@ from typing import Dict, List
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
+import json
+import subprocess
+from pathlib import Path
 
 
 SHEET_COLUMNS = {
@@ -422,6 +425,50 @@ def main() -> None:
                             break
                 except Exception:
                     st.error("삭제에 실패했습니다.")
+
+    st.divider()
+    st.subheader("판매수량")
+    if "sales_snapshot" not in st.session_state:
+        st.session_state["sales_snapshot"] = {}
+
+    col_s1, col_s2 = st.columns([1, 1])
+    with col_s1:
+        st.write(f"최근 업데이트: {st.session_state['sales_snapshot'].get('fetched_at', '-')}")
+    with col_s2:
+        if st.button("판매수량 최신화하기"):
+            with st.spinner("판매수량 최신화 중..."):
+                try:
+                    script_path = Path(__file__).resolve().parent / "scripts" / "sales_snapshot.py"
+                    result = subprocess.run(
+                        ["python3", str(script_path)],
+                        check=True,
+                        timeout=300,
+                        capture_output=True,
+                        text=True,
+                    )
+                    payload = json.loads(result.stdout.strip())
+                    st.session_state["sales_snapshot"] = {
+                        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "date": payload.get("date", "-"),
+                        "cafe24_sales_qty": payload.get("cafe24_sales_qty", "-"),
+                        "coupang_sales_qty": payload.get("coupang_sales_qty", "-"),
+                    }
+                    st.success("판매수량 최신화 완료")
+                except Exception as e:
+                    st.error(f"판매수량 최신화 실패: {e}")
+
+    snap = st.session_state.get("sales_snapshot", {})
+    st.dataframe(
+        [
+            {
+                "기준일": snap.get("date", "-"),
+                "카페24 판매수량": snap.get("cafe24_sales_qty", "-"),
+                "쿠팡 판매수량": snap.get("coupang_sales_qty", "-"),
+            }
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 if __name__ == "__main__":
