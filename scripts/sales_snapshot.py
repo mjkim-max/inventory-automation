@@ -179,7 +179,7 @@ def _coupang_auth(access_key: str, secret_key: str, method: str, path: str, quer
     return f"CEA algorithm=HmacSHA256, access-key={access_key}, signed-date={signed_date}, signature={signature}"
 
 
-def _coupang_sales_qty(vendor_id: str, access_key: str, secret_key: str) -> int:
+def _coupang_sales_qty(vendor_id: str, access_key: str, secret_key: str) -> tuple[int, Dict[str, int]]:
     # Use PO list query (by Minute) with status=ACCEPT (payment completed)
     host = "https://api-gateway.coupang.com"
     path = f"/v2/providers/openapi/apis/api/v5/vendors/{vendor_id}/ordersheets"
@@ -192,6 +192,15 @@ def _coupang_sales_qty(vendor_id: str, access_key: str, secret_key: str) -> int:
     created_from = start.strftime("%Y-%m-%dT%H:%M") + "%2B09:00"
     created_to = end.strftime("%Y-%m-%dT%H:%M") + "%2B09:00"
     total_qty = 0
+    item_map = {
+        "94199205555": "플라우드 노트 Pro / 블랙",
+        "94199205552": "플라우드 노트 Pro / 실버",
+        "90737907302": "플라우드 노트 / 블랙",
+        "90737907295": "플라우드 노트 / 실버",
+        "91942294087": "플라우드 노트핀S / 블랙",
+        "91942294096": "플라우드 노트핀S / 실버",
+    }
+    item_qty = {k: 0 for k in item_map.keys()}
     last_response = None
     query = (
         f"createdAtFrom={created_from}&createdAtTo={created_to}"
@@ -213,6 +222,15 @@ def _coupang_sales_qty(vendor_id: str, access_key: str, secret_key: str) -> int:
             except Exception:
                 q = 0
             total_qty += q
+            vendor_item_id = (
+                item.get("vendorItemId")
+                or item.get("sellerProductItemId")
+                or item.get("vendor_item_id")
+            )
+            if vendor_item_id is not None:
+                key = str(vendor_item_id).strip()
+                if key in item_qty:
+                    item_qty[key] += q
     if total_qty == 0:
         debug_dir = Path(__file__).resolve().parents[1] / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
@@ -220,7 +238,7 @@ def _coupang_sales_qty(vendor_id: str, access_key: str, secret_key: str) -> int:
             json.dumps(last_response or {}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    return total_qty
+    return total_qty, item_qty
 
 
 def main() -> None:
@@ -242,19 +260,24 @@ def main() -> None:
     cafe24_by_variant = _cafe24_sales_by_variant(orders)
 
     coupang_qty = None
+    coupang_items: Dict[str, int] = {}
     if coupang_vendor_id and coupang_access and coupang_secret:
         try:
-            coupang_qty = _coupang_sales_qty(coupang_vendor_id, coupang_access, coupang_secret)
+            coupang_qty, coupang_items = _coupang_sales_qty(
+                coupang_vendor_id, coupang_access, coupang_secret
+            )
         except Exception as e:
             # If Coupang is not accessible (e.g., IP whitelist), skip and continue
             print(f"[WARN] 쿠팡 매출 조회 실패: {e}")
             coupang_qty = None
+            coupang_items = {}
 
     payload = {
         "date": start_date,
         "cafe24_sales_qty": cafe24_qty,
         "cafe24_items": cafe24_by_variant,
         "coupang_sales_qty": coupang_qty,
+        "coupang_items": coupang_items,
     }
     print(json.dumps(payload, ensure_ascii=False))
 

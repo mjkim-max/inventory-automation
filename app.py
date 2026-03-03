@@ -467,6 +467,7 @@ def main() -> None:
                             "cafe24_sales_qty": payload.get("cafe24_sales_qty", "-"),
                             "coupang_sales_qty": payload.get("coupang_sales_qty", "-"),
                             "cafe24_items": payload.get("cafe24_items", {}),
+                            "coupang_items": payload.get("coupang_items", {}),
                         }
                         st.success("판매수량 최신화 완료")
                     except Exception as e:
@@ -489,14 +490,25 @@ def main() -> None:
         "P00000CT000U": "플라우드 노트핀S / 블랙",
         "P00000CT000V": "플라우드 노트핀S / 실버",
     }
+    coupang_map = {
+        "94199205555": "플라우드 노트 Pro / 블랙",
+        "94199205552": "플라우드 노트 Pro / 실버",
+        "90737907302": "플라우드 노트 / 블랙",
+        "90737907295": "플라우드 노트 / 실버",
+        "91942294087": "플라우드 노트핀S / 블랙",
+        "91942294096": "플라우드 노트핀S / 실버",
+    }
+    coupang_by_name = {v: k for k, v in coupang_map.items()}
     items = snap.get("cafe24_items", {}) if isinstance(snap, dict) else {}
+    coupang_items = snap.get("coupang_items", {}) if isinstance(snap, dict) else {}
     rows = []
     total_cafe24 = 0
     total_coupang = 0
     total_smart = 0
     for code, name in label_map.items():
         cafe_qty = _safe_int(items.get(code, 0))
-        coupang_qty = 0
+        coupang_key = coupang_by_name.get(name, "")
+        coupang_qty = _safe_int(coupang_items.get(coupang_key, 0)) if coupang_key else 0
         smart_qty = 0
         total_cafe24 += cafe_qty
         total_coupang += coupang_qty
