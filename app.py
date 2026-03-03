@@ -454,6 +454,11 @@ def main() -> None:
                     st.success("판매수량 최신화 완료")
                 except Exception as e:
                     st.error(f"판매수량 최신화 실패: {e}")
+                    if isinstance(e, subprocess.CalledProcessError):
+                        if e.stdout:
+                            st.code(e.stdout.strip())
+                        if e.stderr:
+                            st.code(e.stderr.strip())
 
     snap = st.session_state.get("sales_snapshot", {})
     st.dataframe(
