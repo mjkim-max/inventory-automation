@@ -216,7 +216,12 @@ def main() -> None:
 
     coupang_qty = None
     if coupang_vendor_id and coupang_access and coupang_secret:
-        coupang_qty = _coupang_sales_qty(coupang_vendor_id, coupang_access, coupang_secret)
+        try:
+            coupang_qty = _coupang_sales_qty(coupang_vendor_id, coupang_access, coupang_secret)
+        except Exception as e:
+            # If Coupang is not accessible (e.g., IP whitelist), skip and continue
+            print(f"[WARN] 쿠팡 매출 조회 실패: {e}")
+            coupang_qty = None
 
     payload = {
         "date": start_date,
