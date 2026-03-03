@@ -73,11 +73,25 @@ def _today_range_kst() -> tuple[str, str]:
 def _fetch_make_token(make_webhook: str) -> str:
     resp = requests.post(make_webhook, timeout=30)
     resp.raise_for_status()
-    data = resp.json()
-    token = data.get("access_token") or data.get("token") or ""
-    if not token:
-        raise RuntimeError("Make webhook response missing access_token")
-    return token
+    text = resp.text.strip()
+    try:
+        data = resp.json()
+        token = data.get("access_token") or data.get("token") or ""
+        if token:
+            return token
+    except Exception:
+        data = None
+    # Fallback: extract token from plain text response
+    if text:
+        if "access_token" in text or "token" in text:
+            import re
+            m = re.search(r"access_token[\"':=\\s]+([A-Za-z0-9\\-_.]+)", text)
+            if m:
+                return m.group(1)
+        # If response is just the token string
+        if len(text) > 20 and "{" not in text:
+            return text.strip()
+    raise RuntimeError(f"Make webhook response missing access_token. Raw: {text[:200]}")
 
 
 def _cafe24_orders(
