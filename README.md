@@ -13,6 +13,7 @@
 
 ```bash
 pip install -r requirements.txt
+pip install -r requirements.local.txt
 python3 -m playwright install chromium
 python3 /Users/kmj/Desktop/Cursor/inventory-automation/scripts/ezadmin_stock_sync.py
 python3 -m streamlit run /Users/kmj/Desktop/Cursor/inventory-automation/app.py
