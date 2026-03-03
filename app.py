@@ -456,8 +456,13 @@ def main() -> None:
                         if not json_line:
                             json_line = out
                         payload = json.loads(json_line)
+                        try:
+                            from zoneinfo import ZoneInfo
+                            now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+                        except Exception:
+                            now_kst = datetime.now()
                         st.session_state["sales_snapshot"] = {
-                            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "fetched_at": now_kst.strftime("%Y-%m-%d %H:%M:%S"),
                             "date": payload.get("date", "-"),
                             "cafe24_sales_qty": payload.get("cafe24_sales_qty", "-"),
                             "coupang_sales_qty": payload.get("coupang_sales_qty", "-"),
