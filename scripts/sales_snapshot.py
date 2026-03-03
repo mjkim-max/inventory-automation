@@ -96,7 +96,7 @@ def _cafe24_orders(
         params = {
             "start_date": start_date,
             "end_date": end_date,
-            "date_type": "payment_datetime",
+            "date_type": "pay_date",
             "embed": "items",
             "shop_no": 1,
             "order_status": paid_status,
@@ -151,35 +151,28 @@ def _coupang_sales_qty(vendor_id: str, access_key: str, secret_key: str) -> int:
     end = now.replace(hour=23, minute=59, second=59, microsecond=0)
     created_from = start.strftime("%Y-%m-%dT%H:%M") + "%2B09:00"
     created_to = end.strftime("%Y-%m-%dT%H:%M") + "%2B09:00"
-    next_token = None
     total_qty = 0
     last_response = None
-    while True:
-        query = (
-            f"createdAtFrom={created_from}&createdAtTo={created_to}"
-            f"&searchType=timeFrame&status=ACCEPT&maxPerPage=50"
-        )
-        if next_token:
-            query += f"&nextToken={next_token}"
-        auth = _coupang_auth(access_key, secret_key, "GET", path, query)
-        headers = {"Authorization": auth, "X-Requested-By": vendor_id}
-        url = f"{host}{path}?{query}"
-        resp = requests.get(url, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        last_response = data
-        orders = data.get("data") or []
-        for order in orders:
-            items = order.get("orderItems") or order.get("items") or []
-            for item in items:
-                try:
-                    q = int(item.get("quantity", 0))
-                except Exception:
-                    q = 0
-                total_qty += q
-        next_token = data.get("nextToken")
-        if not next_token:
-            break
+    query = (
+        f"createdAtFrom={created_from}&createdAtTo={created_to}"
+        f"&searchType=timeFrame&status=ACCEPT"
+    )
+    auth = _coupang_auth(access_key, secret_key, "GET", path, query)
+    headers = {"Authorization": auth, "X-Requested-By": vendor_id}
+    url = f"{host}{path}?{query}"
+    resp = requests.get(url, headers=headers, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    last_response = data
+    orders = data.get("data") or []
+    for order in orders:
+        items = order.get("orderItems") or order.get("items") or []
+        for item in items:
+            try:
+                q = int(item.get("quantity", 0))
+            except Exception:
+                q = 0
+            total_qty += q
     if total_qty == 0:
         debug_dir = Path(__file__).resolve().parents[1] / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
