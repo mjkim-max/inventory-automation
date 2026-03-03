@@ -8,6 +8,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -214,7 +215,7 @@ def main() -> None:
                 try:
                     script_path = Path(__file__).resolve().parent / "scripts" / "ezadmin_stock_sync.py"
                     result = subprocess.run(
-                        ["python3", str(script_path)],
+                        [sys.executable, str(script_path)],
                         check=True,
                         timeout=300,
                         capture_output=True,
@@ -438,7 +439,7 @@ def main() -> None:
                 try:
                     script_path = Path(__file__).resolve().parent / "scripts" / "sales_snapshot.py"
                     result = subprocess.run(
-                        ["python3", str(script_path)],
+                        [sys.executable, str(script_path)],
                         check=True,
                         timeout=300,
                         capture_output=True,
