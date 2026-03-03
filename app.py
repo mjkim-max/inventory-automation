@@ -212,7 +212,6 @@ def main() -> None:
         if st.button("재고 최신화 하기"):
             with st.spinner("재고 최신화 중..."):
                 import subprocess
-                from pathlib import Path
                 try:
                     script_path = Path(__file__).resolve().parent / "scripts" / "ezadmin_stock_sync.py"
                     result = subprocess.run(
