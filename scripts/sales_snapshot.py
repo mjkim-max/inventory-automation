@@ -145,6 +145,32 @@ def _cafe24_sales_qty(orders: List[Dict[str, Any]]) -> int:
     return qty
 
 
+def _cafe24_sales_by_variant(orders: List[Dict[str, Any]]) -> Dict[str, int]:
+    mapping = {
+        "P00000CL000E": "플라우드 노트 / 블랙",
+        "P00000CL000I": "플라우드 노트 / 실버",
+        "P00000DN000M": "플라우드 노트 Pro / 블랙",
+        "P00000DN000N": "플라우드 노트 Pro / 실버",
+        "P00000CT000U": "플라우드 노트핀S / 블랙",
+        "P00000CT000V": "플라우드 노트핀S / 실버",
+    }
+    result = {k: 0 for k in mapping.keys()}
+    for order in orders:
+        status = str(order.get("order_status", "")).upper()
+        if status.startswith(("C", "R", "E", "U")):
+            continue
+        items = order.get("items") or []
+        for item in items:
+            code = str(item.get("variant_code") or item.get("option_code") or "").strip()
+            if code in result:
+                try:
+                    q = int(item.get("quantity", 0))
+                except Exception:
+                    q = 0
+                result[code] += q
+    return result
+
+
 def _coupang_auth(access_key: str, secret_key: str, method: str, path: str, query: str) -> str:
     import time, hmac, hashlib
     signed_date = time.strftime("%y%m%dT%H%M%SZ", time.gmtime())
@@ -213,6 +239,7 @@ def main() -> None:
     cafe24_token = _fetch_make_token(make_webhook)
     orders = _cafe24_orders(cafe24_base, cafe24_token, start_date, end_date)
     cafe24_qty = _cafe24_sales_qty(orders)
+    cafe24_by_variant = _cafe24_sales_by_variant(orders)
 
     coupang_qty = None
     if coupang_vendor_id and coupang_access and coupang_secret:
@@ -226,6 +253,7 @@ def main() -> None:
     payload = {
         "date": start_date,
         "cafe24_sales_qty": cafe24_qty,
+        "cafe24_items": cafe24_by_variant,
         "coupang_sales_qty": coupang_qty,
     }
     print(json.dumps(payload, ensure_ascii=False))

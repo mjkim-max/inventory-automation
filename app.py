@@ -461,6 +461,7 @@ def main() -> None:
                             "date": payload.get("date", "-"),
                             "cafe24_sales_qty": payload.get("cafe24_sales_qty", "-"),
                             "coupang_sales_qty": payload.get("coupang_sales_qty", "-"),
+                            "cafe24_items": payload.get("cafe24_items", {}),
                         }
                         st.success("판매수량 최신화 완료")
                     except Exception as e:
@@ -486,6 +487,28 @@ def main() -> None:
         use_container_width=True,
         hide_index=True,
     )
+
+    items = snap.get("cafe24_items", {}) if isinstance(snap, dict) else {}
+    if items:
+        st.caption("카페24 옵션코드별 판매수량")
+        label_map = {
+            "P00000CL000E": "플라우드 노트 / 블랙",
+            "P00000CL000I": "플라우드 노트 / 실버",
+            "P00000DN000M": "플라우드 노트 Pro / 블랙",
+            "P00000DN000N": "플라우드 노트 Pro / 실버",
+            "P00000CT000U": "플라우드 노트핀S / 블랙",
+            "P00000CT000V": "플라우드 노트핀S / 실버",
+        }
+        rows = []
+        for code, qty in items.items():
+            rows.append(
+                {
+                    "옵션코드": code,
+                    "품목명": label_map.get(code, code),
+                    "판매수량": qty,
+                }
+            )
+        st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":
