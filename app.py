@@ -445,14 +445,18 @@ def main() -> None:
                         capture_output=True,
                         text=True,
                     )
-                    payload = json.loads(result.stdout.strip())
-                    st.session_state["sales_snapshot"] = {
-                        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "date": payload.get("date", "-"),
-                        "cafe24_sales_qty": payload.get("cafe24_sales_qty", "-"),
-                        "coupang_sales_qty": payload.get("coupang_sales_qty", "-"),
-                    }
-                    st.success("판매수량 최신화 완료")
+                    try:
+                        payload = json.loads(result.stdout.strip())
+                        st.session_state["sales_snapshot"] = {
+                            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "date": payload.get("date", "-"),
+                            "cafe24_sales_qty": payload.get("cafe24_sales_qty", "-"),
+                            "coupang_sales_qty": payload.get("coupang_sales_qty", "-"),
+                        }
+                        st.success("판매수량 최신화 완료")
+                    except Exception as e:
+                        st.error(f"판매수량 파싱 실패: {e}")
+                        st.code(result.stdout.strip() or "(stdout empty)")
                 except Exception as e:
                     st.error(f"판매수량 최신화 실패: {e}")
                     if isinstance(e, subprocess.CalledProcessError):
