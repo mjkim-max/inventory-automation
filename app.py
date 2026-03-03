@@ -476,39 +476,43 @@ def main() -> None:
                             st.code(e.stderr.strip())
 
     snap = st.session_state.get("sales_snapshot", {})
-    st.dataframe(
-        [
-            {
-                "기준일": snap.get("date", "-"),
-                "카페24 판매수량": snap.get("cafe24_sales_qty", "-"),
-                "쿠팡 판매수량": snap.get("coupang_sales_qty", "-"),
-            }
-        ],
-        use_container_width=True,
-        hide_index=True,
-    )
-
+    label_map = {
+        "P00000CL000E": "플라우드 노트 / 블랙",
+        "P00000CL000I": "플라우드 노트 / 실버",
+        "P00000DN000M": "플라우드 노트 Pro / 블랙",
+        "P00000DN000N": "플라우드 노트 Pro / 실버",
+        "P00000CT000U": "플라우드 노트핀S / 블랙",
+        "P00000CT000V": "플라우드 노트핀S / 실버",
+    }
     items = snap.get("cafe24_items", {}) if isinstance(snap, dict) else {}
-    if items:
-        st.caption("카페24 옵션코드별 판매수량")
-        label_map = {
-            "P00000CL000E": "플라우드 노트 / 블랙",
-            "P00000CL000I": "플라우드 노트 / 실버",
-            "P00000DN000M": "플라우드 노트 Pro / 블랙",
-            "P00000DN000N": "플라우드 노트 Pro / 실버",
-            "P00000CT000U": "플라우드 노트핀S / 블랙",
-            "P00000CT000V": "플라우드 노트핀S / 실버",
+    rows = []
+    total_cafe24 = 0
+    total_coupang = 0
+    total_smart = 0
+    for code, name in label_map.items():
+        cafe_qty = _safe_int(items.get(code, 0))
+        coupang_qty = 0
+        smart_qty = 0
+        total_cafe24 += cafe_qty
+        total_coupang += coupang_qty
+        total_smart += smart_qty
+        rows.append(
+            {
+                "품목명": name,
+                "CAFE24": cafe_qty,
+                "스마트스토어": smart_qty,
+                "쿠팡": coupang_qty,
+            }
+        )
+    rows.append(
+        {
+            "품목명": "합계",
+            "CAFE24": total_cafe24,
+            "스마트스토어": total_smart,
+            "쿠팡": total_coupang,
         }
-        rows = []
-        for code, qty in items.items():
-            rows.append(
-                {
-                    "옵션코드": code,
-                    "품목명": label_map.get(code, code),
-                    "판매수량": qty,
-                }
-            )
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+    )
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":
