@@ -249,7 +249,13 @@ def _coupang_sales_qty(vendor_id: str, access_key: str, secret_key: str) -> tupl
     return total_qty, item_qty
 
 
-def _smartstore_token(client_id: str, client_secret: str, account_id: str = "") -> str:
+def _smartstore_token(
+    client_id: str,
+    client_secret: str,
+    *,
+    token_type: str = "SELF",
+    account_id: str = "",
+) -> str:
     if bcrypt is None or pybase64 is None:
         raise RuntimeError("bcrypt/pybase64 is required for Smartstore auth.")
     # Naver Commerce API client credentials flow
@@ -263,13 +269,15 @@ def _smartstore_token(client_id: str, client_secret: str, account_id: str = "") 
         "timestamp": timestamp,
         "client_secret_sign": secret_sign,
         "grant_type": "client_credentials",
-        "type": "SELF",
+        "type": token_type,
     }
-    if account_id:
-        params["type"] = "SELLER"
+    if token_type == "SELLER":
+        if not account_id:
+            raise RuntimeError("Smartstore account_id is required for SELLER token.")
         params["account_id"] = account_id
     resp = requests.post(url, data=params, timeout=30)
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Smartstore token error {resp.status_code}: {resp.text[:500]}")
     data = resp.json()
     token = data.get("access_token") or data.get("accessToken")
     if not token:
@@ -422,9 +430,15 @@ def main() -> None:
     smart_id = _get_cfg_value(cfg, "smartstore", "client_id", env="SMARTSTORE_CLIENT_ID")
     smart_secret = _get_cfg_value(cfg, "smartstore", "client_secret", env="SMARTSTORE_CLIENT_SECRET")
     smart_account = _get_cfg_value(cfg, "smartstore", "account_id", env="SMARTSTORE_ACCOUNT_ID")
+    smart_type = _get_cfg_value(cfg, "smartstore", "type", env="SMARTSTORE_TOKEN_TYPE", default="SELF").upper()
     if smart_id and smart_secret:
         try:
-            token = _smartstore_token(smart_id, smart_secret, account_id=smart_account)
+            token = _smartstore_token(
+                smart_id,
+                smart_secret,
+                token_type=smart_type,
+                account_id=smart_account,
+            )
             orders = _smartstore_fetch_product_orders(token)
             smart_qty, smart_items = _smartstore_sales_by_variant(orders)
             payload["smartstore_sales_qty"] = smart_qty
