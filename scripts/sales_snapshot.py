@@ -249,7 +249,7 @@ def _coupang_sales_qty(vendor_id: str, access_key: str, secret_key: str) -> tupl
     return total_qty, item_qty
 
 
-def _smartstore_token(client_id: str, client_secret: str) -> str:
+def _smartstore_token(client_id: str, client_secret: str, account_id: str = "") -> str:
     if bcrypt is None or pybase64 is None:
         raise RuntimeError("bcrypt/pybase64 is required for Smartstore auth.")
     # Naver Commerce API client credentials flow
@@ -265,6 +265,9 @@ def _smartstore_token(client_id: str, client_secret: str) -> str:
         "grant_type": "client_credentials",
         "type": "SELF",
     }
+    if account_id:
+        params["type"] = "SELLER"
+        params["account_id"] = account_id
     resp = requests.post(url, data=params, timeout=30)
     resp.raise_for_status()
     data = resp.json()
@@ -294,14 +297,26 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
         "lastChangedTo": last_to,
     }
     product_order_ids: List[str] = []
-    resp = requests.get(url, headers=headers, params=params, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    items = data.get("data") or data.get("productOrders") or []
-    for item in items:
-        pid = item.get("productOrderId") or item.get("product_order_id")
-        if pid:
-            product_order_ids.append(str(pid))
+    more_from = None
+    more_sequence = None
+    while True:
+        if more_from:
+            params["lastChangedFrom"] = more_from
+        if more_sequence:
+            params["moreSequence"] = more_sequence
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("data") or data.get("productOrders") or []
+        for item in items:
+            pid = item.get("productOrderId") or item.get("product_order_id")
+            if pid:
+                product_order_ids.append(str(pid))
+        more = data.get("more") or {}
+        more_from = more.get("moreFrom")
+        more_sequence = more.get("moreSequence")
+        if not more_from or not more_sequence:
+            break
 
     if not product_order_ids:
         return []
@@ -406,15 +421,18 @@ def main() -> None:
 
     smart_id = _get_cfg_value(cfg, "smartstore", "client_id", env="SMARTSTORE_CLIENT_ID")
     smart_secret = _get_cfg_value(cfg, "smartstore", "client_secret", env="SMARTSTORE_CLIENT_SECRET")
+    smart_account = _get_cfg_value(cfg, "smartstore", "account_id", env="SMARTSTORE_ACCOUNT_ID")
     if smart_id and smart_secret:
         try:
-            token = _smartstore_token(smart_id, smart_secret)
+            token = _smartstore_token(smart_id, smart_secret, account_id=smart_account)
             orders = _smartstore_fetch_product_orders(token)
             smart_qty, smart_items = _smartstore_sales_by_variant(orders)
             payload["smartstore_sales_qty"] = smart_qty
             payload["smartstore_items"] = smart_items
         except Exception as e:
             print(f"[WARN] 스마트스토어 매출 조회 실패: {e}")
+    else:
+        print("[WARN] 스마트스토어 인증정보 없음 (smartstore.client_id / client_secret)")
     print(json.dumps(payload, ensure_ascii=False))
 
 
