@@ -438,33 +438,39 @@ def _smartstore_sales_by_variant(
     for order in product_orders:
         if not isinstance(order, dict):
             continue
-        status = str(order.get("productOrderStatus", "")).upper()
+        # Handle wrapper shape: {"order": {...}, "productOrder": {...}, ...}
+        po = order.get("productOrder") if isinstance(order.get("productOrder"), dict) else order
+        od = order.get("order") if isinstance(order.get("order"), dict) else {}
+
+        status = str(po.get("productOrderStatus", "")).upper()
         if status and status not in include_status:
             continue
-        claim = str(order.get("claimStatus", "")).upper()
+        claim = str(po.get("claimStatus", "")).upper()
         if claim and claim not in {"NONE", "NA"}:
             continue
-        pay_dt = str(order.get("paymentDate", "")).strip()
+        pay_dt = str(od.get("paymentDate") or po.get("paymentDate") or "").strip()
+        if not pay_dt:
+            pay_dt = str(po.get("decisionDate") or po.get("lastChangedDate") or "").strip()
         if pay_dt and pay_dt[:10] != today_str:
             continue
         qty = 0
         try:
-            qty = int(order.get("quantity", 0))
+            qty = int(po.get("quantity", 0))
         except Exception:
             qty = 0
         total_qty += qty
 
         # Try to match on multiple fields
-        option_code = str(order.get("optionCode", "")).strip()
+        option_code = str(po.get("optionCode", "")).strip()
         if option_code and option_code in smart_map:
             label = smart_map[option_code]
             result[label] = result.get(label, 0) + qty
             continue
         candidates = [
-            str(order.get("productId", "")).strip(),
-            str(order.get("itemNo", "")).strip(),
-            str(order.get("optionManageCode", "")).strip(),
-            str(order.get("sellerProductItemId", "")).strip(),
+            str(po.get("productId", "")).strip(),
+            str(po.get("itemNo", "")).strip(),
+            str(po.get("optionManageCode", "")).strip(),
+            str(po.get("sellerProductItemId", "")).strip(),
         ]
         for cid in candidates:
             if cid in smart_map:
