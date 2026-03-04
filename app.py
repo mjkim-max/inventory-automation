@@ -440,8 +440,10 @@ def main() -> None:
             with st.spinner("판매수량 최신화 중..."):
                 try:
                     script_path = Path(__file__).resolve().parent / "scripts" / "sales_snapshot.py"
+                    venv_py = Path(__file__).resolve().parent / ".venv" / "bin" / "python"
+                    py = str(venv_py) if venv_py.exists() else sys.executable
                     result = subprocess.run(
-                        [sys.executable, str(script_path)],
+                        [py, str(script_path)],
                         check=True,
                         timeout=300,
                         capture_output=True,
