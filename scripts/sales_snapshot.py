@@ -32,6 +32,25 @@ except Exception:  # pragma: no cover
     pybase64 = None  # type: ignore[assignment]
 
 
+def _mask_proxy(value: str) -> str:
+    if not value:
+        return ""
+    # Avoid leaking credentials
+    if "@" in value:
+        return value.split("@", 1)[-1]
+    return value
+
+
+def _fetch_public_ip() -> str:
+    try:
+        resp = requests.get("https://api.ipify.org", timeout=5)
+        if resp.status_code >= 400:
+            return ""
+        return resp.text.strip()
+    except Exception:
+        return ""
+
+
 def _load_toml(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
@@ -478,6 +497,11 @@ def main() -> None:
         "coupang_items": coupang_items,
         "smartstore_sales_qty": None,
         "smartstore_items": {},
+        "debug": {
+            "server_ip": _fetch_public_ip(),
+            "http_proxy": _mask_proxy(os.environ.get("HTTP_PROXY", "")),
+            "https_proxy": _mask_proxy(os.environ.get("HTTPS_PROXY", "")),
+        },
     }
 
     smart_id = _get_cfg_value(cfg, "smartstore", "client_id", env="SMARTSTORE_CLIENT_ID")
