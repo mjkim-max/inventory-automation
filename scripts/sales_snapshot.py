@@ -354,7 +354,12 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
             pass
         items = data.get("data") or data.get("productOrders") or []
         if isinstance(items, dict):
-            items = items.get("productOrderIds") or items.get("items") or []
+            items = (
+                items.get("lastChangeStatuses")
+                or items.get("productOrderIds")
+                or items.get("items")
+                or []
+            )
         for item in items:
             if isinstance(item, str):
                 product_order_ids.append(item)
@@ -426,6 +431,7 @@ def _smartstore_sales_by_variant(
     result: Dict[str, int] = {v: 0 for v in smart_map.values()}
     total_qty = 0
     include_status = {"PAYED", "DELIVERING", "DELIVERED", "PURCHASE_DECIDED"}
+    today_str = datetime.now(ZoneInfo("Asia/Seoul") if ZoneInfo else None).strftime("%Y-%m-%d")
 
     for order in product_orders:
         if not isinstance(order, dict):
@@ -435,6 +441,9 @@ def _smartstore_sales_by_variant(
             continue
         claim = str(order.get("claimStatus", "")).upper()
         if claim and claim not in {"NONE", "NA"}:
+            continue
+        pay_dt = str(order.get("paymentDate", "")).strip()
+        if pay_dt and pay_dt[:10] != today_str:
             continue
         qty = 0
         try:
