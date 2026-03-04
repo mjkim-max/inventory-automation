@@ -210,27 +210,7 @@ def main() -> None:
     with header_right:
         st.write("")
         st.write("")
-        if st.button("재고 최신화 하기"):
-            with st.spinner("재고 최신화 중..."):
-                try:
-                    script_path = Path(__file__).resolve().parent / "scripts" / "ezadmin_stock_sync.py"
-                    result = subprocess.run(
-                        [sys.executable, str(script_path)],
-                        check=True,
-                        timeout=300,
-                        capture_output=True,
-                        text=True,
-                    )
-                    st.success("재고 최신화 완료")
-                    if result.stdout:
-                        st.code(result.stdout.strip())
-                except Exception as e:
-                    st.error(f"재고 최신화 실패: {e}")
-                    if isinstance(e, subprocess.CalledProcessError):
-                        if e.stdout:
-                            st.code(e.stdout.strip())
-                        if e.stderr:
-                            st.code(e.stderr.strip())
+        # 재고 최신화 버튼 제거 (로컬 스케줄러로만 동작)
 
     ws = _connect_sheet(readonly=True)
     values = ws.get_all_values()
@@ -253,6 +233,22 @@ def main() -> None:
         now_kst = datetime.now()
     latest_label = f"{latest_date} {now_kst.strftime('%H:%M')}"
     st.subheader(f"최근 데이터: {latest_label}")
+
+    def _channel_status(row: List[str], channel_key: str) -> str:
+        for key, cols in SHEET_COLUMNS.items():
+            if key == "date":
+                continue
+            val = _row_value(row, cols[channel_key])
+            if str(val).strip():
+                return "수집완료"
+        return "수집실패"
+
+    status_line = (
+        f"품고 : {_channel_status(latest_row, 'poomgo')}  "
+        f"이지어드민 : {_channel_status(latest_row, 'ezadmin')}  "
+        f"쿠팡 : {_channel_status(latest_row, 'coupang')}"
+    )
+    st.caption(status_line)
     summary = _build_row_summary(latest_row)
     intake_rows = _load_intake_rows(ws)
 
