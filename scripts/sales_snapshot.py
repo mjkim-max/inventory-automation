@@ -347,7 +347,26 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
 
     orders = data.get("data") or data.get("productOrders") or []
     if isinstance(orders, dict):
+        # Newer API shape: {data: {contents: [{content: {...}}], pagination: {...}}}
+        if isinstance(orders.get("contents"), list):
+            normalized: List[Dict[str, Any]] = []
+            for item in orders["contents"]:
+                if isinstance(item, dict) and isinstance(item.get("content"), dict):
+                    normalized.append(item["content"])
+                elif isinstance(item, dict):
+                    normalized.append(item)
+            return normalized
         orders = orders.get("productOrders") or orders.get("items") or []
+    if isinstance(orders, list):
+        # Some responses wrap each row as {"content": {...}}
+        if orders and isinstance(orders[0], dict) and "content" in orders[0]:
+            normalized = []
+            for item in orders:
+                if isinstance(item, dict) and isinstance(item.get("content"), dict):
+                    normalized.append(item["content"])
+                elif isinstance(item, dict):
+                    normalized.append(item)
+            return normalized
     if isinstance(orders, str):
         return []
     return orders or []
