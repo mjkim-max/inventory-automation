@@ -451,6 +451,9 @@ def main() -> None:
                     )
                     try:
                         out = result.stdout.strip()
+                        warn_lines = [ln for ln in out.splitlines() if ln.strip().startswith("[WARN]")]
+                        for wl in warn_lines:
+                            st.warning(wl)
                         # Use last JSON line in stdout (ignore WARN lines)
                         json_line = ""
                         for line in out.splitlines()[::-1]:
