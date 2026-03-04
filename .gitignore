@@ -5,3 +5,4 @@ __pycache__/
 debug/
 venv/
 env/
+.venv/

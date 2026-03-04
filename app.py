@@ -246,7 +246,13 @@ def main() -> None:
     latest_row = values[latest_idx]
     latest_date = _row_value(latest_row, SHEET_COLUMNS["date"])
 
-    st.subheader(f"최근 데이터: {latest_date}")
+    try:
+        from zoneinfo import ZoneInfo
+        now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+    except Exception:
+        now_kst = datetime.now()
+    latest_label = f"{latest_date} {now_kst.strftime('%H:%M')}"
+    st.subheader(f"최근 데이터: {latest_label}")
     summary = _build_row_summary(latest_row)
     intake_rows = _load_intake_rows(ws)
 
