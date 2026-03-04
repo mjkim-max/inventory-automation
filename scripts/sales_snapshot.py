@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import time
 
 try:
     import tomllib  # py311+
@@ -313,7 +314,7 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
     params = {
         "lastChangedFrom": last_from,
         "lastChangedTo": last_to,
-        "limitCount": 300,
+        "limitCount": 100,
     }
     product_order_ids: List[str] = []
     more_from = None
@@ -323,8 +324,16 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
             params["lastChangedFrom"] = more_from
         if more_sequence:
             params["moreSequence"] = more_sequence
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
-        resp.raise_for_status()
+        # Retry on rate limit
+        for attempt in range(1, 4):
+            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After")
+                wait = int(retry_after) if retry_after and retry_after.isdigit() else (2 * attempt)
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            break
         data = resp.json()
     items = data.get("data") or data.get("productOrders") or []
     if isinstance(items, dict):
