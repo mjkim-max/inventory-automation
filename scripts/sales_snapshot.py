@@ -375,6 +375,16 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
         orders = orders.get("productOrders") or orders.get("items") or []
     if isinstance(orders, str):
         return []
+    # Save debug payload
+    try:
+        debug_dir = Path(__file__).resolve().parents[1] / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        (debug_dir / "smartstore_orders.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
     return orders or []
 
 
