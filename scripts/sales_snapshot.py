@@ -292,7 +292,17 @@ def _smartstore_today_range_kst() -> tuple[str, str]:
         now = datetime.now()
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end = now.replace(hour=23, minute=59, second=59, microsecond=0)
-    return start.isoformat(), end.isoformat()
+    # API expects yyyy-MM-dd'T'HH:mm:ss.SSSXXX (milliseconds with offset)
+    try:
+        return start.isoformat(timespec="milliseconds"), end.isoformat(timespec="milliseconds")
+    except Exception:
+        def _fmt(dt: datetime) -> str:
+            base = dt.strftime("%Y-%m-%dT%H:%M:%S")
+            ms = f"{int(dt.microsecond / 1000):03d}"
+            tz = dt.strftime("%z")
+            tz = tz[:3] + ":" + tz[3:] if tz else "+09:00"
+            return f"{base}.{ms}{tz}"
+        return _fmt(start), _fmt(end)
 
 
 def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
@@ -303,6 +313,7 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
     params = {
         "lastChangedFrom": last_from,
         "lastChangedTo": last_to,
+        "limitCount": 300,
     }
     product_order_ids: List[str] = []
     more_from = None
