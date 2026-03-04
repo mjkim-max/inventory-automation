@@ -439,6 +439,12 @@ def main() -> None:
     except Exception:
         now_kst = datetime.now()
     if snap_date and snap_date != "-":
+        # Normalize to YYYY-MM-DD if payload already includes time
+        try:
+            parsed = datetime.fromisoformat(str(snap_date).strip())
+            snap_date = parsed.strftime("%Y-%m-%d")
+        except Exception:
+            snap_date = str(snap_date).split(" ")[0]
         sales_label = f"{snap_date} {now_kst.strftime('%H:%M')}"
     else:
         sales_label = "-"
