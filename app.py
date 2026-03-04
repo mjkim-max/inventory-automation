@@ -432,9 +432,7 @@ def main() -> None:
     if "sales_snapshot" not in st.session_state:
         st.session_state["sales_snapshot"] = {}
 
-    col_s1, col_s2 = st.columns([1, 1])
-    with col_s1:
-        st.write(f"최근 업데이트: {st.session_state['sales_snapshot'].get('fetched_at', '-')}")
+    _, col_s2 = st.columns([1, 1])
     with col_s2:
         if st.button("판매수량 최신화하기"):
             with st.spinner("판매수량 최신화 중..."):
@@ -477,7 +475,6 @@ def main() -> None:
                             "cafe24_items": payload.get("cafe24_items", {}),
                             "coupang_items": payload.get("coupang_items", {}),
                             "smartstore_items": payload.get("smartstore_items", {}),
-                            "debug": payload.get("debug", {}),
                         }
                         st.success("판매수량 최신화 완료")
                     except Exception as e:
@@ -524,12 +521,6 @@ def main() -> None:
         f"스마트스토어 : {_sales_status(snap.get('smartstore_sales_qty', '-'))}   ㅣ   "
         f"쿠팡 : {_sales_status(snap.get('coupang_sales_qty', '-'))}"
     )
-    debug_info = snap.get("debug", {}) if isinstance(snap, dict) else {}
-    if debug_info:
-        ip = debug_info.get("server_ip") or "-"
-        hp = debug_info.get("http_proxy") or "-"
-        hps = debug_info.get("https_proxy") or "-"
-        st.caption(f"서버 IP: {ip} | HTTP_PROXY: {hp} | HTTPS_PROXY: {hps}")
     st.caption(sales_status_line)
     label_map = {
         "P00000CL000E": "플라우드 노트 / 블랙",
