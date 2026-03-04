@@ -418,15 +418,17 @@ def _smartstore_sales_by_variant(
 ) -> tuple[int, Dict[str, int]]:
     # Map Smartstore product/item ids to labels
     smart_map = {
-        "11380104480": "플라우드 노트핀S",
+        # optionCode based mapping (preferred)
         "56234258616": "플라우드 노트핀S / 블랙",
         "56234258618": "플라우드 노트핀S / 실버",
-        "12696749368": "플라우드 노트 Pro",
         "55736008596": "플라우드 노트 Pro / 블랙",
         "53769211633": "플라우드 노트 Pro / 실버",
-        "10195303069": "플라우드 노트",
         "48485810018": "플라우드 노트 / 블랙",
         "48485810022": "플라우드 노트 / 실버",
+        # productId fallback (if optionCode missing)
+        "11380104480": "플라우드 노트핀S",
+        "12696749368": "플라우드 노트 Pro",
+        "10195303069": "플라우드 노트",
     }
     result: Dict[str, int] = {v: 0 for v in smart_map.values()}
     total_qty = 0
@@ -453,10 +455,14 @@ def _smartstore_sales_by_variant(
         total_qty += qty
 
         # Try to match on multiple fields
+        option_code = str(order.get("optionCode", "")).strip()
+        if option_code and option_code in smart_map:
+            label = smart_map[option_code]
+            result[label] = result.get(label, 0) + qty
+            continue
         candidates = [
             str(order.get("productId", "")).strip(),
             str(order.get("itemNo", "")).strip(),
-            str(order.get("optionCode", "")).strip(),
             str(order.get("optionManageCode", "")).strip(),
             str(order.get("sellerProductItemId", "")).strip(),
         ]
