@@ -314,12 +314,13 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
     params = {
         "lastChangedFrom": last_from,
         "lastChangedTo": last_to,
-        "limitCount": 50,
+        "limitCount": 300,
     }
     product_order_ids: List[str] = []
     more_from = None
     more_sequence = None
-    max_pages = 10
+    max_pages_env = os.getenv("SMARTSTORE_MAX_PAGES", "").strip()
+    max_pages = int(max_pages_env) if max_pages_env.isdigit() else 50
     while True:
         if max_pages <= 0:
             break
@@ -333,8 +334,8 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
             resp = requests.get(url, headers=headers, params=params, timeout=30)
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
-                wait = int(retry_after) if retry_after and retry_after.isdigit() else (2 * attempt)
-                wait = min(wait, 8)
+                wait = int(retry_after) if retry_after and retry_after.isdigit() else (5 * attempt)
+                wait = min(wait, 30)
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
@@ -375,7 +376,7 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
         if not more_from or not more_sequence:
             break
         max_pages -= 1
-        time.sleep(0.3)
+        time.sleep(0.5)
 
     if not product_order_ids:
         # Save empty orders debug payload
