@@ -21,6 +21,14 @@ try:
     from zoneinfo import ZoneInfo
 except Exception:  # pragma: no cover
     ZoneInfo = None  # type: ignore[assignment]
+try:
+    import bcrypt
+except Exception:  # pragma: no cover
+    bcrypt = None  # type: ignore[assignment]
+try:
+    import pybase64
+except Exception:  # pragma: no cover
+    pybase64 = None  # type: ignore[assignment]
 
 
 def _load_toml(path: Path) -> Dict[str, Any]:
@@ -241,6 +249,120 @@ def _coupang_sales_qty(vendor_id: str, access_key: str, secret_key: str) -> tupl
     return total_qty, item_qty
 
 
+def _smartstore_token(client_id: str, client_secret: str) -> str:
+    if bcrypt is None or pybase64 is None:
+        raise RuntimeError("bcrypt/pybase64 is required for Smartstore auth.")
+    # Naver Commerce API client credentials flow
+    timestamp = str(int(datetime.now().timestamp() * 1000))
+    message = f"{client_id}_{timestamp}"
+    hashed = bcrypt.hashpw(message.encode("utf-8"), client_secret.encode("utf-8"))
+    secret_sign = pybase64.standard_b64encode(hashed).decode("utf-8")
+    url = "https://api.commerce.naver.com/external/v1/oauth2/token"
+    params = {
+        "client_id": client_id,
+        "timestamp": timestamp,
+        "client_secret_sign": secret_sign,
+        "grant_type": "client_credentials",
+        "type": "SELF",
+    }
+    resp = requests.post(url, data=params, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    token = data.get("access_token") or data.get("accessToken")
+    if not token:
+        raise RuntimeError(f"Smartstore token missing in response: {data}")
+    return token
+
+
+def _smartstore_today_range_kst() -> tuple[str, str]:
+    if ZoneInfo:
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
+    else:
+        now = datetime.now()
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+    return start.isoformat(), end.isoformat()
+
+
+def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
+    base = "https://api.commerce.naver.com/external"
+    url = f"{base}/v1/pay-order/seller/product-orders/last-changed-statuses"
+    last_from, last_to = _smartstore_today_range_kst()
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {
+        "lastChangedFrom": last_from,
+        "lastChangedTo": last_to,
+    }
+    product_order_ids: List[str] = []
+    resp = requests.get(url, headers=headers, params=params, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    items = data.get("data") or data.get("productOrders") or []
+    for item in items:
+        pid = item.get("productOrderId") or item.get("product_order_id")
+        if pid:
+            product_order_ids.append(str(pid))
+
+    if not product_order_ids:
+        return []
+
+    query_url = f"{base}/v1/pay-order/seller/product-orders/query"
+    payload = {"productOrderIds": product_order_ids}
+    resp = requests.post(query_url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("data") or data.get("productOrders") or []
+
+
+def _smartstore_sales_by_variant(
+    product_orders: List[Dict[str, Any]],
+) -> tuple[int, Dict[str, int]]:
+    # Map Smartstore product/item ids to labels
+    smart_map = {
+        "11380104480": "플라우드 노트핀S",
+        "56234258616": "플라우드 노트핀S / 블랙",
+        "56234258618": "플라우드 노트핀S / 실버",
+        "12696749368": "플라우드 노트 Pro",
+        "55736008596": "플라우드 노트 Pro / 블랙",
+        "53769211633": "플라우드 노트 Pro / 실버",
+        "10195303069": "플라우드 노트",
+        "48485810018": "플라우드 노트 / 블랙",
+        "48485810022": "플라우드 노트 / 실버",
+    }
+    result: Dict[str, int] = {v: 0 for v in smart_map.values()}
+    total_qty = 0
+    include_status = {"PAYED", "DELIVERING", "DELIVERED", "PURCHASE_DECIDED"}
+
+    for order in product_orders:
+        status = str(order.get("productOrderStatus", "")).upper()
+        if status and status not in include_status:
+            continue
+        claim = str(order.get("claimStatus", "")).upper()
+        if claim and claim not in {"NONE", "NA"}:
+            continue
+        qty = 0
+        try:
+            qty = int(order.get("quantity", 0))
+        except Exception:
+            qty = 0
+        total_qty += qty
+
+        # Try to match on multiple fields
+        candidates = [
+            str(order.get("productId", "")).strip(),
+            str(order.get("itemNo", "")).strip(),
+            str(order.get("optionCode", "")).strip(),
+            str(order.get("optionManageCode", "")).strip(),
+            str(order.get("sellerProductItemId", "")).strip(),
+        ]
+        for cid in candidates:
+            if cid in smart_map:
+                label = smart_map[cid]
+                result[label] = result.get(label, 0) + qty
+                break
+    return total_qty, result
+
+
 def main() -> None:
     cfg = _load_secrets()
     make_webhook = _get_cfg_value(cfg, "cafe24", "make_webhook", env="CAFE24_MAKE_WEBHOOK")
@@ -278,7 +400,21 @@ def main() -> None:
         "cafe24_items": cafe24_by_variant,
         "coupang_sales_qty": coupang_qty,
         "coupang_items": coupang_items,
+        "smartstore_sales_qty": None,
+        "smartstore_items": {},
     }
+
+    smart_id = _get_cfg_value(cfg, "smartstore", "client_id", env="SMARTSTORE_CLIENT_ID")
+    smart_secret = _get_cfg_value(cfg, "smartstore", "client_secret", env="SMARTSTORE_CLIENT_SECRET")
+    if smart_id and smart_secret:
+        try:
+            token = _smartstore_token(smart_id, smart_secret)
+            orders = _smartstore_fetch_product_orders(token)
+            smart_qty, smart_items = _smartstore_sales_by_variant(orders)
+            payload["smartstore_sales_qty"] = smart_qty
+            payload["smartstore_items"] = smart_items
+        except Exception as e:
+            print(f"[WARN] 스마트스토어 매출 조회 실패: {e}")
     print(json.dumps(payload, ensure_ascii=False))
 
 

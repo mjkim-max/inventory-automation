@@ -484,6 +484,7 @@ def main() -> None:
     coupang_by_name = {v: k for k, v in coupang_map.items()}
     items = snap.get("cafe24_items", {}) if isinstance(snap, dict) else {}
     coupang_items = snap.get("coupang_items", {}) if isinstance(snap, dict) else {}
+    smart_items = snap.get("smartstore_items", {}) if isinstance(snap, dict) else {}
     rows = []
     total_cafe24 = 0
     total_coupang = 0
@@ -492,7 +493,7 @@ def main() -> None:
         cafe_qty = _safe_int(items.get(code, 0))
         coupang_key = coupang_by_name.get(name, "")
         coupang_qty = _safe_int(coupang_items.get(coupang_key, 0)) if coupang_key else 0
-        smart_qty = 0
+        smart_qty = _safe_int(smart_items.get(name, 0))
         total_cafe24 += cafe_qty
         total_coupang += coupang_qty
         total_smart += smart_qty
