@@ -6,9 +6,6 @@ from typing import Dict, List
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
-import json
-import subprocess
-import sys
 from pathlib import Path
 
 
@@ -432,58 +429,36 @@ def main() -> None:
     if "sales_snapshot" not in st.session_state:
         st.session_state["sales_snapshot"] = {}
 
-    col_s1, col_s2 = st.columns([1, 1])
-    with col_s1:
-        st.write(f"최근 업데이트: {st.session_state['sales_snapshot'].get('fetched_at', '-')}")
-    with col_s2:
-        if st.button("판매수량 최신화하기"):
-            with st.spinner("판매수량 최신화 중..."):
-                try:
-                    script_path = Path(__file__).resolve().parent / "scripts" / "sales_snapshot.py"
-                    result = subprocess.run(
-                        [sys.executable, str(script_path)],
-                        check=True,
-                        timeout=300,
-                        capture_output=True,
-                        text=True,
-                    )
-                    try:
-                        out = result.stdout.strip()
-                        # Use last JSON line in stdout (ignore WARN lines)
-                        json_line = ""
-                        for line in out.splitlines()[::-1]:
-                            if line.strip().startswith("{") and line.strip().endswith("}"):
-                                json_line = line.strip()
-                                break
-                        if not json_line:
-                            json_line = out
-                        payload = json.loads(json_line)
-                        try:
-                            from zoneinfo import ZoneInfo
-                            now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
-                        except Exception:
-                            now_kst = datetime.now()
-                        st.session_state["sales_snapshot"] = {
-                            "fetched_at": now_kst.strftime("%Y-%m-%d %H:%M:%S"),
-                            "date": payload.get("date", "-"),
-                            "cafe24_sales_qty": payload.get("cafe24_sales_qty", "-"),
-                            "coupang_sales_qty": payload.get("coupang_sales_qty", "-"),
-                            "cafe24_items": payload.get("cafe24_items", {}),
-                            "coupang_items": payload.get("coupang_items", {}),
-                        }
-                        st.success("판매수량 최신화 완료")
-                    except Exception as e:
-                        st.error(f"판매수량 파싱 실패: {e}")
-                        st.code(result.stdout.strip() or "(stdout empty)")
-                except Exception as e:
-                    st.error(f"판매수량 최신화 실패: {e}")
-                    if isinstance(e, subprocess.CalledProcessError):
-                        if e.stdout:
-                            st.code(e.stdout.strip())
-                        if e.stderr:
-                            st.code(e.stderr.strip())
+    # 판매수량 최신화 버튼 제거 (로컬 스케줄러로만 동작)
 
     snap = st.session_state.get("sales_snapshot", {})
+    snap_date = snap.get("date", "-") if isinstance(snap, dict) else "-"
+    try:
+        from zoneinfo import ZoneInfo
+        now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+    except Exception:
+        now_kst = datetime.now()
+    if snap_date and snap_date != "-":
+        sales_label = f"{snap_date} {now_kst.strftime('%H:%M')}"
+    else:
+        sales_label = "-"
+    st.subheader(f"최근 데이터: {sales_label}")
+
+    def _sales_status(value) -> str:
+        if value is None:
+            return "수집실패"
+        if isinstance(value, str) and not value.strip():
+            return "수집실패"
+        if value == "-":
+            return "수집실패"
+        return "수집완료"
+
+    sales_status_line = (
+        f"CAFE24 : {_sales_status(snap.get('cafe24_sales_qty', '-'))}   ㅣ   "
+        f"스마트스토어 : {_sales_status(snap.get('smartstore_sales_qty', '-'))}   ㅣ   "
+        f"쿠팡 : {_sales_status(snap.get('coupang_sales_qty', '-'))}"
+    )
+    st.caption(sales_status_line)
     label_map = {
         "P00000CL000E": "플라우드 노트 / 블랙",
         "P00000CL000I": "플라우드 노트 / 실버",
