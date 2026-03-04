@@ -244,8 +244,8 @@ def main() -> None:
         return "수집실패"
 
     status_line = (
-        f"품고 : {_channel_status(latest_row, 'poomgo')}  "
-        f"이지어드민 : {_channel_status(latest_row, 'ezadmin')}  "
+        f"품고 : {_channel_status(latest_row, 'poomgo')}   ㅣ   "
+        f"이지어드민 : {_channel_status(latest_row, 'ezadmin')}   ㅣ   "
         f"쿠팡 : {_channel_status(latest_row, 'coupang')}"
     )
     st.caption(status_line)
