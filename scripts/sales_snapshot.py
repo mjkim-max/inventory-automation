@@ -342,6 +342,16 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
         if resp is None or resp.status_code == 429:
             raise RuntimeError("Smartstore rate limited (429). Try again later.")
         data = resp.json()
+        # Save last-changed response for debugging (even if empty)
+        try:
+            debug_dir = Path(__file__).resolve().parents[1] / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            (debug_dir / "smartstore_last_changed.json").write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
         items = data.get("data") or data.get("productOrders") or []
         if isinstance(items, dict):
             items = items.get("productOrderIds") or items.get("items") or []
@@ -363,6 +373,16 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
         time.sleep(0.3)
 
     if not product_order_ids:
+        # Save empty orders debug payload
+        try:
+            debug_dir = Path(__file__).resolve().parents[1] / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            (debug_dir / "smartstore_orders.json").write_text(
+                json.dumps({"productOrderIds": []}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
         return []
 
     query_url = f"{base}/v1/pay-order/seller/product-orders/query"
