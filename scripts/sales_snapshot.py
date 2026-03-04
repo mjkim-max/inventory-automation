@@ -314,31 +314,38 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
     params = {
         "lastChangedFrom": last_from,
         "lastChangedTo": last_to,
-        "limitCount": 100,
+        "limitCount": 50,
     }
     product_order_ids: List[str] = []
     more_from = None
     more_sequence = None
+    max_pages = 10
     while True:
+        if max_pages <= 0:
+            break
         if more_from:
             params["lastChangedFrom"] = more_from
         if more_sequence:
             params["moreSequence"] = more_sequence
-        # Retry on rate limit
+        # Retry on rate limit with capped backoff
+        resp = None
         for attempt in range(1, 4):
             resp = requests.get(url, headers=headers, params=params, timeout=30)
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
                 wait = int(retry_after) if retry_after and retry_after.isdigit() else (2 * attempt)
+                wait = min(wait, 8)
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
             break
+        if resp is None or resp.status_code == 429:
+            raise RuntimeError("Smartstore rate limited (429). Try again later.")
         data = resp.json()
-    items = data.get("data") or data.get("productOrders") or []
-    if isinstance(items, dict):
-        items = items.get("productOrderIds") or items.get("items") or []
-    for item in items:
+        items = data.get("data") or data.get("productOrders") or []
+        if isinstance(items, dict):
+            items = items.get("productOrderIds") or items.get("items") or []
+        for item in items:
         if isinstance(item, str):
             product_order_ids.append(item)
             continue
@@ -352,6 +359,8 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
         more_sequence = more.get("moreSequence")
         if not more_from or not more_sequence:
             break
+        max_pages -= 1
+        time.sleep(0.3)
 
     if not product_order_ids:
         return []
