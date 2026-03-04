@@ -346,14 +346,14 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
         if isinstance(items, dict):
             items = items.get("productOrderIds") or items.get("items") or []
         for item in items:
-        if isinstance(item, str):
-            product_order_ids.append(item)
-            continue
-        if not isinstance(item, dict):
-            continue
-        pid = item.get("productOrderId") or item.get("product_order_id")
-        if pid:
-            product_order_ids.append(str(pid))
+            if isinstance(item, str):
+                product_order_ids.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            pid = item.get("productOrderId") or item.get("product_order_id")
+            if pid:
+                product_order_ids.append(str(pid))
         more = data.get("more") or {}
         more_from = more.get("moreFrom")
         more_sequence = more.get("moreSequence")
