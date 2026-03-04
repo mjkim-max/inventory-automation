@@ -326,11 +326,18 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
         resp = requests.get(url, headers=headers, params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
-        items = data.get("data") or data.get("productOrders") or []
-        for item in items:
-            pid = item.get("productOrderId") or item.get("product_order_id")
-            if pid:
-                product_order_ids.append(str(pid))
+    items = data.get("data") or data.get("productOrders") or []
+    if isinstance(items, dict):
+        items = items.get("productOrderIds") or items.get("items") or []
+    for item in items:
+        if isinstance(item, str):
+            product_order_ids.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        pid = item.get("productOrderId") or item.get("product_order_id")
+        if pid:
+            product_order_ids.append(str(pid))
         more = data.get("more") or {}
         more_from = more.get("moreFrom")
         more_sequence = more.get("moreSequence")
@@ -345,7 +352,12 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
     resp = requests.post(query_url, headers=headers, json=payload, timeout=30)
     resp.raise_for_status()
     data = resp.json()
-    return data.get("data") or data.get("productOrders") or []
+    orders = data.get("data") or data.get("productOrders") or []
+    if isinstance(orders, dict):
+        orders = orders.get("productOrders") or orders.get("items") or []
+    if isinstance(orders, str):
+        return []
+    return orders or []
 
 
 def _smartstore_sales_by_variant(
@@ -368,6 +380,8 @@ def _smartstore_sales_by_variant(
     include_status = {"PAYED", "DELIVERING", "DELIVERED", "PURCHASE_DECIDED"}
 
     for order in product_orders:
+        if not isinstance(order, dict):
+            continue
         status = str(order.get("productOrderStatus", "")).upper()
         if status and status not in include_status:
             continue
