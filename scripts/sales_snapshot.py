@@ -307,101 +307,34 @@ def _smartstore_today_range_kst() -> tuple[str, str]:
 
 
 def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
+    # Fetch by pay date range (today only) to avoid pulling historical changes
     base = "https://api.commerce.naver.com/external"
-    url = f"{base}/v1/pay-order/seller/product-orders/last-changed-statuses"
-    last_from, last_to = _smartstore_today_range_kst()
+    url = f"{base}/v1/pay-order/seller/product-orders"
+    pay_from, pay_to = _smartstore_today_range_kst()
     headers = {"Authorization": f"Bearer {token}"}
     params = {
-        "lastChangedFrom": last_from,
-        "lastChangedTo": last_to,
-        "limitCount": 300,
+        "from": pay_from,
+        "to": pay_to,
+        "rangeType": "PAYED_DATETIME",
     }
-    product_order_ids: List[str] = []
-    more_from = None
-    more_sequence = None
-    max_pages_env = os.getenv("SMARTSTORE_MAX_PAGES", "").strip()
-    max_pages = int(max_pages_env) if max_pages_env.isdigit() else 50
-    while True:
-        if max_pages <= 0:
-            break
-        if more_from:
-            params["lastChangedFrom"] = more_from
-        if more_sequence:
-            params["moreSequence"] = more_sequence
-        # Retry on rate limit with capped backoff
-        resp = None
-        for attempt in range(1, 4):
-            resp = requests.get(url, headers=headers, params=params, timeout=30)
-            if resp.status_code == 429:
-                retry_after = resp.headers.get("Retry-After")
-                wait = int(retry_after) if retry_after and retry_after.isdigit() else (5 * attempt)
-                wait = min(wait, 30)
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            break
-        if resp is None or resp.status_code == 429:
-            raise RuntimeError("Smartstore rate limited (429). Try again later.")
-        data = resp.json()
-        # Save last-changed response for debugging (even if empty)
-        try:
-            debug_dir = Path(__file__).resolve().parents[1] / "debug"
-            debug_dir.mkdir(parents=True, exist_ok=True)
-            (debug_dir / "smartstore_last_changed.json").write_text(
-                json.dumps(data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except Exception:
-            pass
-        items = data.get("data") or data.get("productOrders") or []
-        if isinstance(items, dict):
-            items = (
-                items.get("lastChangeStatuses")
-                or items.get("productOrderIds")
-                or items.get("items")
-                or []
-            )
-        for item in items:
-            if isinstance(item, str):
-                product_order_ids.append(item)
-                continue
-            if not isinstance(item, dict):
-                continue
-            pid = item.get("productOrderId") or item.get("product_order_id")
-            if pid:
-                product_order_ids.append(str(pid))
-        more = data.get("more") or {}
-        more_from = more.get("moreFrom")
-        more_sequence = more.get("moreSequence")
-        if not more_from or not more_sequence:
-            break
-        max_pages -= 1
-        time.sleep(0.5)
 
-    if not product_order_ids:
-        # Save empty orders debug payload
-        try:
-            debug_dir = Path(__file__).resolve().parents[1] / "debug"
-            debug_dir.mkdir(parents=True, exist_ok=True)
-            (debug_dir / "smartstore_orders.json").write_text(
-                json.dumps({"productOrderIds": []}, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except Exception:
-            pass
-        return []
+    # Retry on rate limit with capped backoff
+    resp = None
+    for attempt in range(1, 4):
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        if resp.status_code == 429:
+            retry_after = resp.headers.get("Retry-After")
+            wait = int(retry_after) if retry_after and retry_after.isdigit() else (5 * attempt)
+            wait = min(wait, 30)
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        break
+    if resp is None or resp.status_code == 429:
+        raise RuntimeError("Smartstore rate limited (429). Try again later.")
 
-    query_url = f"{base}/v1/pay-order/seller/product-orders/query"
-    payload = {"productOrderIds": product_order_ids}
-    resp = requests.post(query_url, headers=headers, json=payload, timeout=30)
-    resp.raise_for_status()
     data = resp.json()
-    orders = data.get("data") or data.get("productOrders") or []
-    if isinstance(orders, dict):
-        orders = orders.get("productOrders") or orders.get("items") or []
-    if isinstance(orders, str):
-        return []
-    # Save debug payload
+    # Save debug payload (even if empty)
     try:
         debug_dir = Path(__file__).resolve().parents[1] / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
@@ -411,6 +344,12 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
         )
     except Exception:
         pass
+
+    orders = data.get("data") or data.get("productOrders") or []
+    if isinstance(orders, dict):
+        orders = orders.get("productOrders") or orders.get("items") or []
+    if isinstance(orders, str):
+        return []
     return orders or []
 
 
