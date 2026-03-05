@@ -168,7 +168,7 @@ def _poomgo_create_receiving(
 ) -> Dict[str, Any]:
     if requests is None:
         raise RuntimeError("requests is not installed.")
-    url = "https://api.poomgo.com/open-api/receiving-sheets"
+    url = "https://api.poomgo.com/open-api/wms/receiving-sheets"
     payload = {
         "name": name,
         "depart_at": depart_at,
