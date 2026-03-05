@@ -124,9 +124,22 @@ def _connect_sales_sheet(readonly: bool = True):
     return ss.worksheet(worksheet)
 
 
-def _get_latest_sales_snapshot():
+@st.cache_data(ttl=30, show_spinner=False)
+def _get_sheet_values_cached(worksheet_name: str) -> List[List[str]]:
+    ws = _connect_sheet(readonly=True)
+    if worksheet_name != ws.title:
+        ws = ws.spreadsheet.worksheet(worksheet_name)
+    return ws.get_all_values()
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _get_sales_values_cached() -> List[List[str]]:
     ws = _connect_sales_sheet(readonly=True)
-    values = ws.get_all_values()
+    return ws.get_all_values()
+
+
+def _get_latest_sales_snapshot():
+    values = _get_sales_values_cached()
     if len(values) < 2:
         return {}
     latest_row = None
@@ -371,7 +384,7 @@ def main() -> None:
     except Exception as e:
         st.error(f"구글 시트 연결 실패: {e}")
         st.stop()
-    values = ws.get_all_values()
+    values = _get_sheet_values_cached(ws.title)
     if not values:
         st.warning("시트 데이터가 비어 있습니다.")
         return
@@ -579,8 +592,7 @@ def main() -> None:
         tq_status_map = {}
         filter_date = st.date_input("날짜 필터", value=None)
         try:
-            add_ws = _connect_sheet(readonly=True).spreadsheet.worksheet("Add_inventory")
-            intake_values = add_ws.get_all_values()
+            intake_values = _get_sheet_values_cached("Add_inventory")
             if intake_values and len(intake_values) > 1:
                 header = intake_values[0]
                 header_lower = {h.lower(): h for h in header}
@@ -604,8 +616,7 @@ def main() -> None:
 
                 # Load transfer queue status for matching rows (best-effort)
                 try:
-                    tq_ws = _connect_sheet(readonly=True).spreadsheet.worksheet("TransferQueue")
-                    tq_values = tq_ws.get_all_values()
+                    tq_values = _get_sheet_values_cached("TransferQueue")
                     tq_header = tq_values[0] if tq_values else []
                     tq_idx = {name: j for j, name in enumerate(tq_header)}
                     for row_i, row in enumerate(tq_values[1:], start=2):
@@ -630,8 +641,7 @@ def main() -> None:
                 # Load created_at per (date/from/to/sku/qty) to group by created_at when possible
                 created_at_map = {}
                 try:
-                    tq_ws = _connect_sheet(readonly=True).spreadsheet.worksheet("TransferQueue")
-                    tq_values = tq_ws.get_all_values()
+                    tq_values = _get_sheet_values_cached("TransferQueue")
                     tq_header = tq_values[0] if tq_values else []
                     tq_idx = {name: j for j, name in enumerate(tq_header)}
                     for row in tq_values[1:]:
