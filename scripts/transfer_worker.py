@@ -546,8 +546,22 @@ def _run_once() -> None:
             continue
 
         # For ezadmin -> poomgo, only proceed after ezadmin outbound is done
-        if from_channel == "이지어드민" and status != "EZADMIN_DONE" and not ez_out_bypass:
-            continue
+        if from_channel == "이지어드민" and not ez_out_bypass:
+            if status != "EZADMIN_DONE":
+                continue
+            # Optional delay after EZADMIN_DONE to ensure ezadmin has settled
+            try:
+                delay_sec = int(os.getenv("POOMGO_AFTER_EZADMIN_DELAY_SEC", "0"))
+            except Exception:
+                delay_sec = 0
+            if delay_sec > 0:
+                updated_at_raw = _norm_str(_get(row, header_idx.get("updated_at", -1)))
+                try:
+                    updated_dt = datetime.strptime(updated_at_raw, "%Y-%m-%d %H:%M:%S")
+                    if (datetime.now() - updated_dt).total_seconds() < delay_sec:
+                        continue
+                except Exception:
+                    pass
         if external_id:
             # Already created in Poomgo
             continue
