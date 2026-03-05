@@ -523,8 +523,7 @@ def main() -> None:
             snap_date = parsed.strftime("%Y-%m-%d")
         except Exception:
             snap_date = str(snap_date).split(" ")[0]
-        fetched_at = snap.get("fetched_at", "")
-        sales_label = f"{snap_date} {now_kst.strftime('%H:%M')} (최근 갱신: {fetched_at})"
+        sales_label = f"{snap_date} {now_kst.strftime('%H:%M')}"
     else:
         sales_label = "-"
     st.subheader(f"최근 데이터: {sales_label}")
