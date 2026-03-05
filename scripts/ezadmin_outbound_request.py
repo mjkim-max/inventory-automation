@@ -33,6 +33,14 @@ SKU_TO_EZADMIN_NAME = {
     "노트핀S 실버": "플라우드 노트핀S / 실버",
     "사용설명서": "V3C 사용설명서",
 }
+SKU_TO_EZADMIN_CODE = {
+    "노트프로 블랙": "00355",
+    "노트프로 실버": "00356",
+    "노트 블랙": "00358",
+    "노트 실버": "00359",
+    "노트핀S 블랙": "00362",
+    "노트핀S 실버": "00363",
+}
 
 
 def _load_toml(path: Path) -> Dict[str, Any]:
@@ -288,7 +296,10 @@ def _normalize_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not sku_name or qty <= 0:
             continue
         ez_name = SKU_TO_EZADMIN_NAME.get(sku_name, sku_name)
-        normalized.append({"sku_name": sku_name, "ez_name": ez_name, "barcode": barcode, "quantity": qty})
+        ez_code = SKU_TO_EZADMIN_CODE.get(sku_name, "").strip()
+        normalized.append(
+            {"sku_name": sku_name, "ez_name": ez_name, "ez_code": ez_code, "barcode": barcode, "quantity": qty}
+        )
     return normalized
 
 
@@ -526,12 +537,15 @@ def create_outbound_request(
                 pass
 
             name_to_qty = {}
+            code_to_qty = {}
             for item in normalized_items:
                 name_to_qty[item["ez_name"]] = int(item["quantity"])
+                if item.get("ez_code"):
+                    code_to_qty[item["ez_code"]] = int(item["quantity"])
 
             product_popup.evaluate(
                 """
-                ({ nameToQty }) => {
+                ({ nameToQty, codeToQty }) => {
                   const rows = document.querySelectorAll('table#grid1 tbody tr');
                   const headers = Array.from(document.querySelectorAll('.ui-jqgrid-htable th'));
                   const findHeaderId = (label) => {
@@ -539,11 +553,17 @@ def create_outbound_request(
                     return h ? h.id : null;
                   };
                   const nameHeaderId = findHeaderId('상품명');
+                  const codeHeaderId = findHeaderId('상품코드');
                   const qtyHeaderId = findHeaderId('출고수량');
                   rows.forEach((row) => {
+                    const codeCell = codeHeaderId ? row.querySelector(`td[aria-describedby='${codeHeaderId}']`) : null;
+                    const codeText = codeCell ? codeCell.textContent.trim() : '';
                     const nameCell = nameHeaderId ? row.querySelector(`td[aria-describedby='${nameHeaderId}']`) : null;
                     const nameText = nameCell ? nameCell.textContent.trim() : '';
                     let qty = null;
+                    if (codeText && codeToQty[codeText] != null) {
+                      qty = codeToQty[codeText];
+                    }
                     for (const [name, val] of Object.entries(nameToQty)) {
                       if (name && nameText.includes(name)) {
                         qty = val;
@@ -562,7 +582,7 @@ def create_outbound_request(
                   });
                 }
                 """,
-                {"nameToQty": name_to_qty},
+                {"nameToQty": name_to_qty, "codeToQty": code_to_qty},
             )
 
             # Click insert all
