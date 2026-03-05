@@ -275,6 +275,7 @@ def create_inbound_request(
             "--disable-features=Crashpad",
             "--no-crashpad",
             "--no-sandbox",
+            "--disable-popup-blocking",
         ]
         tmp_home = tempfile.mkdtemp(prefix="ezadmin_chrome_home_")
         launch_env = os.environ.copy()
