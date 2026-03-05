@@ -502,6 +502,10 @@ def main() -> None:
     summary = _build_row_summary(latest_row)
     intake_rows = _load_intake_rows(ws)
 
+    lead_time_days = 14
+    cover_days = 35
+    safety_factor = 0.3
+
     def build_channel_table(channel_key: str, channel_label: str) -> List[Dict[str, str]]:
         rows = []
         for key, label in SKU_LABELS.items():
@@ -513,14 +517,22 @@ def main() -> None:
             if avg and avg > 0:
                 days_left = int(_safe_int(stock) / avg) if _safe_int(stock) > 0 else 0
                 days_text = str(days_left)
+                cover_demand = avg * cover_days
+                safety_stock = cover_demand * safety_factor
+                recommend = int(round(cover_demand + safety_stock - _safe_int(stock)))
+                if recommend < 0:
+                    recommend = 0
+                recommend_text = str(recommend)
             else:
                 days_text = "-"
+                recommend_text = "-"
             rows.append(
                 {
                     "품목명": label,
                     "재고수량": stock,
                     "일평균 출고량": avg_val,
                     "출고 가능 일 수": days_text,
+                    "발주 추천수량": recommend_text,
                 }
             )
         return rows
