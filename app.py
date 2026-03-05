@@ -354,6 +354,7 @@ def _load_intake_rows(sheet) -> List[Dict[str, str]]:
         if not values or len(values) < 2:
             return []
         header = values[0]
+        header_norm = [str(h).strip().lower() for h in header]
         rows = values[1:]
         result = []
         for r in rows:
@@ -361,7 +362,12 @@ def _load_intake_rows(sheet) -> List[Dict[str, str]]:
                 continue
             if len(r) >= 1 and str(r[0]).strip().lower() == "date":
                 continue
-            result.append(dict(zip(header, r)))
+            row_dict = {}
+            for i, key in enumerate(header_norm):
+                if not key:
+                    continue
+                row_dict[key] = r[i] if i < len(r) else ""
+            result.append(row_dict)
         return result
     except Exception:
         return []
