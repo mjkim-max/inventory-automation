@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import time
 from datetime import datetime
@@ -43,6 +44,26 @@ try:
 except Exception as e:  # pragma: no cover
     create_outbound_request = None  # type: ignore[assignment]
     _EZADMIN_OUTBOUND_IMPORT_ERROR = str(e)
+
+
+def _next_outbound_sheet_name(base_name: str, header_idx: Dict[str, int], rows: List[tuple]) -> str:
+    max_suffix = 0
+    sheet_col = header_idx.get("sheet_name", -1)
+    msg_col = header_idx.get("message", -1)
+    for _row_idx, row in rows:
+        name = ""
+        if sheet_col >= 0:
+            name = _norm_str(_get(row, sheet_col))
+        if not name and msg_col >= 0:
+            name = _norm_str(_get(row, msg_col))
+        if base_name in name:
+            m = re.search(rf"{re.escape(base_name)}_(\\d+)", name)
+            if m:
+                try:
+                    max_suffix = max(max_suffix, int(m.group(1)))
+                except Exception:
+                    continue
+    return f\"{base_name}_{max_suffix + 1}\"
 
 SKU_NAME_TO_BARCODE = {
     "플라우드 노트 Pro / 블랙": "199284926073",
@@ -149,6 +170,7 @@ def _ensure_transfer_queue_header(ws) -> None:
         "updated_at",
         "action",
         "external_id",
+        "sheet_name",
     ]
     values = ws.get_all_values()
     if not values:
@@ -429,12 +451,16 @@ def _run_once() -> None:
                 )
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             try:
+                base_date = date_str or datetime.now().strftime("%Y-%m-%d")
+                base_name = f"{base_date.replace('-', '')}_{from_channel or '이지어드민'}_품고_신규"
+                sheet_name = _next_outbound_sheet_name(base_name, header_idx, rows)
                 resp = create_outbound_request(
                     items=items,
-                    date_str=date_str or datetime.now().strftime("%Y-%m-%d"),
+                    date_str=base_date,
                     from_channel=from_channel or "이지어드민",
                     headless=ez_headless,
                     stop_after_create=False,
+                    sheet_name_override=sheet_name,
                 )
                 msg = f"ezadmin_outbound_sheet={resp.get('display_name') or resp.get('sheet_name','')}"
                 for row_idx, _ in group_rows:
@@ -445,6 +471,7 @@ def _run_once() -> None:
                         status="EZADMIN_DONE",
                         message=msg,
                         updated_at=now,
+                        sheet_name=resp.get("display_name") or resp.get("sheet_name", ""),
                     )
             except Exception as e:
                 for row_idx, _ in group_rows:

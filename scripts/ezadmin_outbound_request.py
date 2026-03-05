@@ -318,6 +318,7 @@ def create_outbound_request(
     supplier_name: str = "주식회사뮨",
     headless: bool = True,
     stop_after_create: bool = True,
+    sheet_name_override: str | None = None,
 ) -> Dict[str, Any]:
     cfg = _load_secrets()
     domain = _get_cfg_value(cfg, "ezadmin", "domain", env="EZADMIN_DOMAIN")
@@ -395,7 +396,9 @@ def create_outbound_request(
                 page_text = page.content()
             except Exception:
                 page_text = ""
-            sheet_name = _next_sheet_name(base_name, supplier_name, existing_names, page_text=page_text)
+            sheet_name = sheet_name_override or _next_sheet_name(
+                base_name, supplier_name, existing_names, page_text=page_text
+            )
             display_name = f"{sheet_name}_{supplier_name}"
 
             # Create sheet (open popup URL directly to avoid popup blocking)
