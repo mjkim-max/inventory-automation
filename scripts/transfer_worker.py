@@ -192,7 +192,8 @@ def _poomgo_create_receiving(
     if resp.status_code in {401, 403} and not token.lower().startswith("bearer "):
         headers = _poomgo_headers(f"Bearer {token}")
         resp = requests.put(url, headers=headers, json=payload, timeout=30)
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        raise RuntimeError(f"poomgo error {resp.status_code}: {resp.text[:200]}")
     return resp.json()
 
 
@@ -205,7 +206,8 @@ def _poomgo_cancel_receiving(*, token: str, receiving_id: str) -> None:
     if resp.status_code in {401, 403} and not token.lower().startswith("bearer "):
         headers = _poomgo_headers(f"Bearer {token}")
         resp = requests.delete(url, headers=headers, timeout=30)
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        raise RuntimeError(f"poomgo error {resp.status_code}: {resp.text[:200]}")
 
 
 def main() -> None:
