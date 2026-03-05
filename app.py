@@ -593,7 +593,8 @@ def main() -> None:
                         qty = row[tq_idx.get("quantity", -1)] if tq_idx.get("quantity", -1) >= 0 else ""
                         status = row[tq_idx.get("status", -1)] if tq_idx.get("status", -1) >= 0 else ""
                         updated = row[tq_idx.get("updated_at", -1)] if tq_idx.get("updated_at", -1) >= 0 else ""
-                        key = (str(date), str(from_ch), str(to_ch), str(sku), str(qty))
+                        created = row[tq_idx.get("created_at", -1)] if tq_idx.get("created_at", -1) >= 0 else ""
+                        key = (str(date), str(from_ch), str(to_ch), str(created), str(sku), str(qty))
                         prev = tq_status_map.get(key)
                         if not prev or row_i >= int(prev.get("row_i", 0)):
                             tq_status_map[key] = {"status": status, "updated": updated, "row_i": row_i}
@@ -601,12 +602,41 @@ def main() -> None:
                     tq_status_map = {}
 
                 # Group by (date, from_channel, channel)
+                # Load created_at per (date/from/to/sku/qty) to group by created_at when possible
+                created_at_map = {}
+                try:
+                    tq_ws = _connect_sheet(readonly=True).spreadsheet.worksheet("TransferQueue")
+                    tq_values = tq_ws.get_all_values()
+                    tq_header = tq_values[0] if tq_values else []
+                    tq_idx = {name: j for j, name in enumerate(tq_header)}
+                    for row in tq_values[1:]:
+                        if not row:
+                            continue
+                        date = row[tq_idx.get("date", -1)] if tq_idx.get("date", -1) >= 0 else ""
+                        from_ch = row[tq_idx.get("from_channel", -1)] if tq_idx.get("from_channel", -1) >= 0 else ""
+                        to_ch = row[tq_idx.get("to_channel", -1)] if tq_idx.get("to_channel", -1) >= 0 else ""
+                        sku = row[tq_idx.get("sku_name", -1)] if tq_idx.get("sku_name", -1) >= 0 else ""
+                        qty = row[tq_idx.get("quantity", -1)] if tq_idx.get("quantity", -1) >= 0 else ""
+                        created = row[tq_idx.get("created_at", -1)] if tq_idx.get("created_at", -1) >= 0 else ""
+                        key = (str(date), str(from_ch), str(to_ch), str(sku), str(qty))
+                        if created:
+                            created_at_map[key] = created
+                except Exception:
+                    created_at_map = {}
+
                 groups = {}
                 for row_idx, row_dict in data_rows:
+                    date_val = str(_val(row_dict, "date"))
+                    from_val = str(_val(row_dict, "from_channel"))
+                    to_val = str(_val(row_dict, "channel"))
+                    sku_val = str(_val(row_dict, "sku_name"))
+                    qty_val = str(_val(row_dict, "quantity"))
+                    created_val = created_at_map.get((date_val, from_val, to_val, sku_val, qty_val), "")
                     gkey = (
-                        str(_val(row_dict, "date")),
-                        str(_val(row_dict, "from_channel")),
-                        str(_val(row_dict, "channel")),
+                        date_val,
+                        from_val,
+                        to_val,
+                        created_val,
                     )
                     groups.setdefault(gkey, []).append((row_idx, row_dict))
 
@@ -624,15 +654,16 @@ def main() -> None:
 
         if intake_groups:
             st.caption("날짜 / 출고 / 입고 기준으로 그룹화되어 있습니다.")
-            for (date_val, from_ch, to_ch), rows in intake_groups:
-                header_label = f"{date_val}  {from_ch} → {to_ch}"
+            for (date_val, from_ch, to_ch, created_val), rows in intake_groups:
+                time_label = f" {created_val}" if created_val else ""
+                header_label = f"{date_val}{time_label}  {from_ch} → {to_ch}"
                 with st.expander(header_label, expanded=False):
                     # Build rows with status
                     display_rows = []
                     for _row_idx, row_dict in rows:
                         sku = _val(row_dict, "sku_name")
                         qty = _val(row_dict, "quantity")
-                        key = (str(date_val), str(from_ch), str(to_ch), str(sku), str(qty))
+                        key = (str(date_val), str(from_ch), str(to_ch), str(created_val), str(sku), str(qty))
                         status = tq_status_map.get(key, {}).get("status", "")
                         display_rows.append(
                             {
