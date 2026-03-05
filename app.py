@@ -544,11 +544,17 @@ def main() -> None:
     with right:
         st.subheader("최근 입고내역")
         intake_rows = []
+        intake_groups = []
+        tq_status_map = {}
         try:
             add_ws = _connect_sheet(readonly=True).spreadsheet.worksheet("Add_inventory")
             intake_values = add_ws.get_all_values()
             if intake_values and len(intake_values) > 1:
                 header = intake_values[0]
+                header_lower = {h.lower(): h for h in header}
+                def _val(r, key):
+                    k = header_lower.get(key, key)
+                    return r.get(k, "")
                 data_rows = []
                 for i, r in enumerate(intake_values[1:], start=2):
                     if not r:
@@ -557,47 +563,86 @@ def main() -> None:
                         continue
                     if len(r) >= 1 and str(r[0]).strip().lower() == "date":
                         continue
-                    data_rows.append((i, r))
-                recent = list(reversed(data_rows))[:10]
-                intake_rows = [dict(zip(header, r)) for _, r in recent]
-                st.dataframe(intake_rows, use_container_width=True, hide_index=True)
+                    data_rows.append((i, dict(zip(header, r))))
+
+                # Load transfer queue status for matching rows (best-effort)
+                try:
+                    tq_ws = _connect_sheet(readonly=True).spreadsheet.worksheet("TransferQueue")
+                    tq_values = tq_ws.get_all_values()
+                    tq_header = tq_values[0] if tq_values else []
+                    tq_idx = {name: j for j, name in enumerate(tq_header)}
+                    for row in tq_values[1:]:
+                        if not row:
+                            continue
+                        date = row[tq_idx.get("date", -1)] if tq_idx.get("date", -1) >= 0 else ""
+                        from_ch = row[tq_idx.get("from_channel", -1)] if tq_idx.get("from_channel", -1) >= 0 else ""
+                        to_ch = row[tq_idx.get("to_channel", -1)] if tq_idx.get("to_channel", -1) >= 0 else ""
+                        sku = row[tq_idx.get("sku_name", -1)] if tq_idx.get("sku_name", -1) >= 0 else ""
+                        qty = row[tq_idx.get("quantity", -1)] if tq_idx.get("quantity", -1) >= 0 else ""
+                        status = row[tq_idx.get("status", -1)] if tq_idx.get("status", -1) >= 0 else ""
+                        updated = row[tq_idx.get("updated_at", -1)] if tq_idx.get("updated_at", -1) >= 0 else ""
+                        key = (str(date), str(from_ch), str(to_ch), str(sku), str(qty))
+                        prev = tq_status_map.get(key)
+                        if not prev or str(updated) >= str(prev.get("updated", "")):
+                            tq_status_map[key] = {"status": status, "updated": updated}
+                except Exception:
+                    tq_status_map = {}
+
+                # Group by (date, from_channel, channel)
+                groups = {}
+                for row_idx, row_dict in data_rows:
+                    gkey = (
+                        str(_val(row_dict, "date")),
+                        str(_val(row_dict, "from_channel")),
+                        str(_val(row_dict, "channel")),
+                    )
+                    groups.setdefault(gkey, []).append((row_idx, row_dict))
+
+                # Order by latest row index desc, show up to 10 groups
+                grouped = sorted(
+                    groups.items(),
+                    key=lambda kv: max(r[0] for r in kv[1]),
+                    reverse=True,
+                )[:10]
+                intake_groups = grouped
             else:
                 st.info("입고내역이 없습니다.")
         except Exception:
             st.info("입고내역을 불러올 수 없습니다.")
 
-        if intake_rows:
-            st.caption("삭제할 항목을 선택하세요.")
-            del_col1, del_col2 = st.columns(2)
-            # Map displayed rows to their sheet row index for reliable deletion
-            header = intake_values[0]
-            header_lower = {h.lower(): h for h in header}
-            def _val(r, key):
-                k = header_lower.get(key, key)
-                return r.get(k, "")
-            key_options = []
-            row_index_map = {}
-            for row_idx, r in recent:
-                row_dict = dict(zip(header, r))
-                label = f"{_val(row_dict, 'date')} | {_val(row_dict, 'from_channel')} | {_val(row_dict, 'channel')} | {_val(row_dict, 'sku_name')} | {_val(row_dict, 'quantity')}"
-                key_options.append(label)
-                row_index_map[label] = row_idx
-            target = del_col1.selectbox("삭제 대상", key_options)
-            if del_col2.button("삭제"):
-                deleted = False
-                try:
-                    add_ws = _connect_sheet(readonly=False).spreadsheet.worksheet("Add_inventory")
-                    row_idx = row_index_map.get(target)
-                    if row_idx:
-                        add_ws.delete_rows(row_idx)
-                        st.success("삭제되었습니다.")
-                        deleted = True
-                    else:
-                        st.error("삭제 대상 행을 찾지 못했습니다.")
-                except Exception:
-                    st.error("삭제에 실패했습니다.")
-                if deleted:
-                    st.experimental_rerun()
+        if intake_groups:
+            st.caption("날짜 / 출고 / 입고 기준으로 그룹화되어 있습니다.")
+            for (date_val, from_ch, to_ch), rows in intake_groups:
+                header_label = f"{date_val}  {from_ch} → {to_ch}"
+                with st.expander(header_label, expanded=False):
+                    # Build rows with status
+                    display_rows = []
+                    for _row_idx, row_dict in rows:
+                        sku = _val(row_dict, "sku_name")
+                        qty = _val(row_dict, "quantity")
+                        key = (str(date_val), str(from_ch), str(to_ch), str(sku), str(qty))
+                        status = tq_status_map.get(key, {}).get("status", "")
+                        display_rows.append(
+                            {
+                                "품목명": sku,
+                                "수량": qty,
+                                "상태": status if status else "-",
+                            }
+                        )
+                    st.dataframe(display_rows, use_container_width=True, hide_index=True)
+                    if st.button("등록 삭제", key=f"delete_{date_val}_{from_ch}_{to_ch}"):
+                        deleted = False
+                        try:
+                            add_ws = _connect_sheet(readonly=False).spreadsheet.worksheet("Add_inventory")
+                            # delete from bottom to top to keep indices stable
+                            for row_idx, _ in sorted(rows, key=lambda x: x[0], reverse=True):
+                                add_ws.delete_rows(row_idx)
+                            st.success("삭제되었습니다.")
+                            deleted = True
+                        except Exception:
+                            st.error("삭제에 실패했습니다.")
+                        if deleted:
+                            st.experimental_rerun()
 
         st.divider()
         st.subheader("품고 입고요청 취소")
