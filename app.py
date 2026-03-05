@@ -700,6 +700,7 @@ def main() -> None:
                         time_only = parts[1] if len(parts) > 1 else created_val
                 time_label = f" {time_only}" if time_only else ""
                 header_label = f"{date_val}{time_label}  {from_ch} → {to_ch}"
+                delete_key = f"delete_{date_val}_{from_ch}_{to_ch}_{created_val}"
                 with st.expander(header_label, expanded=False):
                     # Build rows with status
                     display_rows = []
@@ -716,15 +717,20 @@ def main() -> None:
                             }
                         )
                     st.dataframe(display_rows, use_container_width=True, hide_index=True)
-                    delete_key = f"delete_{date_val}_{from_ch}_{to_ch}_{created_val}"
                     if st.button("등록 삭제", key=delete_key):
                         deleted = False
+                        # Clear cached reads to avoid stale rows after deletion
+                        try:
+                            _get_sheet_values_cached.clear()
+                            _get_sales_values_cached.clear()
+                        except Exception:
+                            pass
                         try:
                             add_ws = _connect_sheet(readonly=False).spreadsheet.worksheet("Add_inventory")
                             # Queue cancel for matching transfer rows (if any)
                             try:
                                 tq_ws = _connect_sheet(readonly=False).spreadsheet.worksheet("TransferQueue")
-                                tq_values = tq_ws.get_all_values()
+                                tq_values = _get_sheet_values_cached("TransferQueue")
                                 tq_header = tq_values[0] if tq_values else []
                                 tq_idx = {name: j for j, name in enumerate(tq_header)}
                                 now_ts = _now_kst().strftime("%Y-%m-%d %H:%M:%S")
@@ -734,7 +740,11 @@ def main() -> None:
                                     t_date = tq_row[tq_idx.get("date", -1)] if tq_idx.get("date", -1) >= 0 else ""
                                     t_from = tq_row[tq_idx.get("from_channel", -1)] if tq_idx.get("from_channel", -1) >= 0 else ""
                                     t_to = tq_row[tq_idx.get("to_channel", -1)] if tq_idx.get("to_channel", -1) >= 0 else ""
-                                    if str(t_date) == str(date_val) and str(t_from) == str(from_ch) and str(t_to) == str(to_ch):
+                                    if (
+                                        str(t_date) == str(date_val)
+                                        and str(t_from) == str(from_ch)
+                                        and str(t_to) == str(to_ch)
+                                    ):
                                         action_col = tq_idx.get("action", -1) + 1
                                         status_col = tq_idx.get("status", -1) + 1
                                         updated_col = tq_idx.get("updated_at", -1) + 1
