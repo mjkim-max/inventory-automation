@@ -391,6 +391,19 @@ def create_inbound_request(
                     m = re.search(r"(\\d{1,10})", raw)
                     if m:
                         sheet_id_from_href = m.group(1)
+                if not sheet_id_from_href:
+                    # Try to read "전표번호" column from the same row
+                    row = sheet_link.first.locator("xpath=ancestor::tr[1]")
+                    table = row.locator("xpath=ancestor::table[1]")
+                    headers = [h.strip() for h in table.locator("th").all_text_contents()]
+                    if "전표번호" in headers:
+                        col_idx = headers.index("전표번호")
+                        cells = row.locator("td")
+                        if cells.count() > col_idx:
+                            text = cells.nth(col_idx).inner_text()
+                            m = re.search(r"(\\d+)", text or "")
+                            if m:
+                                sheet_id_from_href = m.group(1)
             except Exception:
                 sheet_id_from_href = None
             if not href:
