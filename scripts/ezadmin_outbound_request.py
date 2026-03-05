@@ -467,9 +467,9 @@ def create_outbound_request(
             except Exception:
                 sheet_id_from_href = None
             # Try clicking first to follow the site's flow
-            detail_popup = _open_popup_or_same(page, sheet_link, context, wait_url_contains="template=IM50")
+            detail_popup = _open_popup_or_same(page, sheet_link, context, wait_url_contains="template=IM53")
             if detail_popup is page and sheet_id_from_href:
-                detail_url = f"{base}/popup35.htm?template=IM50&sheet={sheet_id_from_href}"
+                detail_url = f"{base}/popup35.htm?template=IM53&sheet={sheet_id_from_href}"
                 detail_popup = context.new_page()
                 detail_popup.goto(detail_url, wait_until="domcontentloaded")
             elif detail_popup is page and href:
@@ -502,9 +502,9 @@ def create_outbound_request(
                 if not add_btn:
                     _debug_dump(detail_popup, "detail_no_addbtn")
                     raise RuntimeError("상품추가 버튼을 찾지 못했습니다.")
-                product_popup = _open_popup_or_same(detail_popup, add_btn, context, wait_url_contains="template=IM13")
+                product_popup = _open_popup_or_same(detail_popup, add_btn, context, wait_url_contains="template=IM54")
             else:
-                product_url = f"{base}/popup35.htm?template=IM13&seq={sheet_id}"
+                product_url = f"{base}/popup35.htm?template=IM54&seq={sheet_id}"
                 product_popup = context.new_page()
                 product_popup.goto(product_url, wait_until="domcontentloaded")
             product_popup.wait_for_timeout(800)
@@ -525,42 +525,35 @@ def create_outbound_request(
             except Exception:
                 pass
 
-            def _norm_barcode(val: str) -> str:
-                return re.sub(r"\\D+", "", val or "")
-
-            barcode_to_qty = {}
             name_to_qty = {}
             for item in normalized_items:
-                if item.get("barcode"):
-                    barcode_to_qty[_norm_barcode(item["barcode"])] = int(item["quantity"])
                 name_to_qty[item["ez_name"]] = int(item["quantity"])
 
             product_popup.evaluate(
                 """
-                ({ barcodeToQty, nameToQty }) => {
-                  const norm = (v) => (v || '').replace(/\\D+/g, '');
+                ({ nameToQty }) => {
                   const rows = document.querySelectorAll('table#grid1 tbody tr');
+                  const headers = Array.from(document.querySelectorAll('.ui-jqgrid-htable th'));
+                  const findHeaderId = (label) => {
+                    const h = headers.find((el) => (el.textContent || '').trim().includes(label));
+                    return h ? h.id : null;
+                  };
+                  const nameHeaderId = findHeaderId('상품명');
+                  const qtyHeaderId = findHeaderId('출고수량');
                   rows.forEach((row) => {
-                    const nameCell = row.querySelector("td[aria-describedby$='col3']");
-                    const barcodeCell = row.querySelector("td[aria-describedby$='col20']");
+                    const nameCell = nameHeaderId ? row.querySelector(`td[aria-describedby='${nameHeaderId}']`) : null;
                     const nameText = nameCell ? nameCell.textContent.trim() : '';
-                    const barcodeText = barcodeCell ? norm(barcodeCell.textContent) : '';
                     let qty = null;
-                    if (barcodeText && barcodeToQty[barcodeText] != null) {
-                      qty = barcodeToQty[barcodeText];
-                    } else {
-                      for (const [name, val] of Object.entries(nameToQty)) {
-                        if (name && nameText.includes(name)) {
-                          qty = val;
-                          break;
-                        }
+                    for (const [name, val] of Object.entries(nameToQty)) {
+                      if (name && nameText.includes(name)) {
+                        qty = val;
+                        break;
                       }
                     }
                     if (qty == null) return;
-                    const input =
-                      row.querySelector('td.stockin_qty input') ||
-                      row.querySelector("td[aria-describedby$='col6'] input.stockin_qty") ||
-                      row.querySelector("td[aria-describedby$='col6'] input");
+                    const input = qtyHeaderId
+                      ? row.querySelector(`td[aria-describedby='${qtyHeaderId}'] input`)
+                      : row.querySelector('td.stockout_qty input');
                     if (input) {
                       input.value = String(qty);
                       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -569,7 +562,7 @@ def create_outbound_request(
                   });
                 }
                 """,
-                {"barcodeToQty": barcode_to_qty, "nameToQty": name_to_qty},
+                {"nameToQty": name_to_qty},
             )
 
             # Click insert all
