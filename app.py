@@ -9,6 +9,38 @@ import gspread
 from google.oauth2.service_account import Credentials
 import json
 import re
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover
+    ZoneInfo = None  # type: ignore[assignment]
+
+_KST = ZoneInfo("Asia/Seoul") if ZoneInfo else None
+_UTC = ZoneInfo("UTC") if ZoneInfo else None
+
+
+def _now_kst() -> datetime:
+    if _KST:
+        return datetime.now(_KST)
+    return datetime.now()
+
+
+def _parse_kst(ts: str) -> datetime | None:
+    if not ts:
+        return None
+    dt = None
+    try:
+        dt = datetime.fromisoformat(ts.strip())
+    except Exception:
+        try:
+            dt = datetime.strptime(ts.strip(), "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+    if _KST:
+        if dt.tzinfo is None and _UTC:
+            dt = dt.replace(tzinfo=_UTC).astimezone(_KST)
+        else:
+            dt = dt.astimezone(_KST)
+    return dt
 
 
 SHEET_COLUMNS = {
@@ -123,11 +155,7 @@ def _get_latest_sales_snapshot():
             payload = json.loads(payload_json)
         except Exception:
             payload = {}
-    try:
-        from zoneinfo import ZoneInfo
-        now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
-    except Exception:
-        now_kst = datetime.now()
+    now_kst = _now_kst()
     return {
         "fetched_at": latest_row[1].strip(),
         "date": payload.get("date", "-"),
@@ -356,11 +384,7 @@ def main() -> None:
     latest_row = values[latest_idx]
     latest_date = _row_value(latest_row, SHEET_COLUMNS["date"])
 
-    try:
-        from zoneinfo import ZoneInfo
-        now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
-    except Exception:
-        now_kst = datetime.now()
+    now_kst = _now_kst()
     latest_label = f"{latest_date} {now_kst.strftime('%H:%M')}"
     st.subheader(f"최근 데이터: {latest_label}")
 
@@ -504,7 +528,7 @@ def main() -> None:
                 _ensure_transfer_queue_header(queue_ws)
                 appended = 0
                 queued = 0
-                now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                now_ts = _now_kst().strftime("%Y-%m-%d %H:%M:%S")
                 for row in intake_df:
                     sku_name = str(row.get("품목명", "")).strip()
                     qty = row.get("입고수량", 0)
@@ -658,9 +682,12 @@ def main() -> None:
             for (date_val, from_ch, to_ch, created_val), rows in intake_groups:
                 time_only = ""
                 if created_val:
-                    # created_at format: YYYY-MM-DD HH:MM:SS
-                    parts = created_val.split(" ")
-                    time_only = parts[1] if len(parts) > 1 else created_val
+                    parsed_kst = _parse_kst(created_val)
+                    if parsed_kst:
+                        time_only = parsed_kst.strftime("%H:%M:%S")
+                    else:
+                        parts = created_val.split(" ")
+                        time_only = parts[1] if len(parts) > 1 else created_val
                 time_label = f" {time_only}" if time_only else ""
                 header_label = f"{date_val}{time_label}  {from_ch} → {to_ch}"
                 with st.expander(header_label, expanded=False):
@@ -690,7 +717,7 @@ def main() -> None:
                                 tq_values = tq_ws.get_all_values()
                                 tq_header = tq_values[0] if tq_values else []
                                 tq_idx = {name: j for j, name in enumerate(tq_header)}
-                                now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                now_ts = _now_kst().strftime("%Y-%m-%d %H:%M:%S")
                                 for i, tq_row in enumerate(tq_values[1:], start=2):
                                     if not tq_row:
                                         continue
@@ -729,11 +756,7 @@ def main() -> None:
 
     snap = st.session_state.get("sales_snapshot", {})
     snap_date = snap.get("date", "-") if isinstance(snap, dict) else "-"
-    try:
-        from zoneinfo import ZoneInfo
-        now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
-    except Exception:
-        now_kst = datetime.now()
+    now_kst = _now_kst()
     if snap_date and snap_date != "-":
         # Normalize to YYYY-MM-DD if payload already includes time
         try:
