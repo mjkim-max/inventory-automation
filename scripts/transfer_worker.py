@@ -86,6 +86,15 @@ def _norm_str(val: Any) -> str:
     return str(val).strip()
 
 
+def _is_quota_error(err: Exception) -> bool:
+    msg = str(err)
+    return (
+        "Quota exceeded" in msg
+        or "Read requests per minute" in msg
+        or "429" in msg
+    )
+
+
 def _load_toml(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
@@ -152,7 +161,13 @@ def _ensure_transfer_queue_header(ws) -> None:
         "external_id",
         "sheet_name",
     ]
-    values = ws.get_all_values()
+    try:
+        values = ws.get_all_values()
+    except Exception as e:
+        if _is_quota_error(e):
+            print("[WARN] Sheets quota exceeded; skipping this cycle.")
+            return
+        raise
     if not values:
         ws.append_row(header)
         return
