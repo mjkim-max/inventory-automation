@@ -57,6 +57,9 @@ def _next_outbound_sheet_name(base_name: str, header_idx: Dict[str, int], rows: 
         if not name and msg_col >= 0:
             name = _norm_str(_get(row, msg_col))
         if base_name in name:
+            # strip supplier suffix if present
+            if "_주식회사뮨" in name:
+                name = name.split("_주식회사뮨")[0]
             m = re.search(rf"{re.escape(base_name)}_(\\d+)", name)
             if m:
                 try:
