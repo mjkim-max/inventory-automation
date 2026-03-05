@@ -295,9 +295,19 @@ def _calc_avg_outflow(
 
 def main() -> None:
     st.set_page_config(page_title="재고 대시보드", layout="wide")
-    # Auto-refresh every hour to pick up latest sheet data
+    # Auto-refresh shortly after each top-of-hour update (align with hourly sheet writes)
     components.html(
-        "<script>setTimeout(() => { window.location.reload(); }, 3600000);</script>",
+        """
+<script>
+(function(){
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(now.getHours() + 1, 2, 0, 0); // HH:02 to allow sheet update to finish
+  const delay = Math.max(1000, next.getTime() - now.getTime());
+  setTimeout(() => { window.location.reload(); }, delay);
+})();
+</script>
+""",
         height=0,
         width=0,
     )
