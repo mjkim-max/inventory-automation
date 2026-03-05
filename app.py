@@ -893,10 +893,10 @@ def main() -> None:
         values: List[List[str]],
         intake_rows: List[Dict[str, str]],
         sku_key: str,
-    ) -> float:
+    ) -> tuple[float, dict]:
         cols = SHEET_COLUMNS.get(sku_key, {})
         if not cols:
-            return 0.0
+            return 0.0, {}
         date_col = _col_to_index(SHEET_COLUMNS["date"]) - 1
         series: List[Tuple[datetime, int]] = []
         for row in values:
@@ -912,13 +912,21 @@ def main() -> None:
                     total += _safe_int(_row_value(row, col))
             series.append((dt, total))
         if len(series) < 2:
-            return 0.0
+            return 0.0, {}
         series.sort(key=lambda x: x[0])
         past_dt, past_stock = series[0]
         today_dt, today_stock = series[-1]
         days = (today_dt - past_dt).days - 1
         if days <= 0:
-            return 0.0
+            return 0.0, {
+                "start_date": past_dt.strftime("%Y-%m-%d"),
+                "end_date": today_dt.strftime("%Y-%m-%d"),
+                "days": max(0, days),
+                "past_stock": past_stock,
+                "today_stock": today_stock,
+                "intake_sum": 0,
+                "outbound_sum": 0,
+            }
         intake_sum = 0
         outbound_sum = 0
         sku_label = SKU_LABELS.get(sku_key, "")
@@ -940,7 +948,15 @@ def main() -> None:
         avg = (past_stock - today_stock + intake_sum - outbound_sum) / days
         if avg < 0:
             avg = 0.0
-        return avg
+        return avg, {
+            "start_date": past_dt.strftime("%Y-%m-%d"),
+            "end_date": today_dt.strftime("%Y-%m-%d"),
+            "days": days,
+            "past_stock": past_stock,
+            "today_stock": today_stock,
+            "intake_sum": intake_sum,
+            "outbound_sum": outbound_sum,
+        }
 
     order_rows = []
     for key, label in SKU_LABELS.items():
@@ -948,7 +964,7 @@ def main() -> None:
         if label == "사용설명서":
             continue
         # Use stock-flow based average (inventory movement) for recommendations
-        fallback_avg = _fallback_avg_from_stock(values, intake_rows, key)
+        fallback_avg, fallback_meta = _fallback_avg_from_stock(values, intake_rows, key)
         avg_90 = fallback_avg
         avg_30 = fallback_avg
         r = (avg_30 / avg_90) if avg_90 > 0 else 1.0
@@ -975,6 +991,11 @@ def main() -> None:
                 "성장계수": f"{g:.2f}",
                 "현재재고(합계)": stock_total,
                 "추천발주수량": recommend,
+                "기준기간(일)": fallback_meta.get("days", ""),
+                "기준시작일": fallback_meta.get("start_date", ""),
+                "기준종료일": fallback_meta.get("end_date", ""),
+                "입고합계": fallback_meta.get("intake_sum", ""),
+                "출고합계": fallback_meta.get("outbound_sum", ""),
             }
         )
 
