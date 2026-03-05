@@ -237,8 +237,12 @@ def main() -> None:
     delivery_type = str(
         recv_cfg.get("delivery_type") or os.getenv("POOMGO_DELIVERY_TYPE", "")
     ).strip()
-    pallet_count_raw = recv_cfg.get("pallet_count") or os.getenv("POOMGO_PALLET_COUNT", "")
-    box_count_raw = recv_cfg.get("box_count") or os.getenv("POOMGO_BOX_COUNT", "")
+    pallet_count_raw = recv_cfg.get("pallet_count")
+    if pallet_count_raw is None:
+        pallet_count_raw = os.getenv("POOMGO_PALLET_COUNT", "")
+    box_count_raw = recv_cfg.get("box_count")
+    if box_count_raw is None:
+        box_count_raw = os.getenv("POOMGO_BOX_COUNT", "")
 
     def _to_int(val: Any):
         if val is None:
