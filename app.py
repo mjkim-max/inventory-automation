@@ -336,18 +336,23 @@ def _calc_avg_outflow(
         return None, None
 
     intake_sum = 0
+    outbound_sum = 0
     for r in intake_rows:
-        if str(r.get("channel", "")) != channel_label:
-            continue
+        to_ch = str(r.get("channel", ""))
+        from_ch = str(r.get("from_channel", ""))
         if str(r.get("sku_name", "")) != sku_label:
             continue
         dt = _parse_date(str(r.get("date", "")))
         if not dt:
             continue
         if past_dt < dt <= today_dt:
-            intake_sum += _safe_int(r.get("quantity", "0"))
+            qty = _safe_int(r.get("quantity", "0"))
+            if to_ch == channel_label:
+                intake_sum += qty
+            if from_ch == channel_label:
+                outbound_sum += qty
 
-    avg = (past_stock - today_stock + intake_sum) / days
+    avg = (past_stock - today_stock + intake_sum - outbound_sum) / days
     if avg < 0:
         avg = 0.0
     return avg, days
