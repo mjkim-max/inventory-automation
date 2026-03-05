@@ -578,10 +578,10 @@ def main() -> None:
             key_options = []
             row_index_map = {}
             for row_idx, r in recent:
-                label = f\"{_val(r, 'date')} | {_val(r, 'from_channel')} | {_val(r, 'channel')} | {_val(r, 'sku_name')} | {_val(r, 'quantity')}\"
+                label = f"{_val(r, 'date')} | {_val(r, 'from_channel')} | {_val(r, 'channel')} | {_val(r, 'sku_name')} | {_val(r, 'quantity')}"
                 key_options.append(label)
                 row_index_map[label] = row_idx
-            target = del_col1.selectbox(\"삭제 대상\", key_options)
+            target = del_col1.selectbox("삭제 대상", key_options)
             if del_col2.button("삭제"):
                 try:
                     add_ws = _connect_sheet(readonly=False).spreadsheet.worksheet("Add_inventory")
