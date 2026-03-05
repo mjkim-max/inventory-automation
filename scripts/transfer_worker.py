@@ -156,7 +156,8 @@ def _poomgo_headers(token: str) -> Dict[str, str]:
         return {}
     if token.lower().startswith("bearer "):
         return {"Authorization": token, "Content-Type": "application/json", "accept": "application/json"}
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "accept": "application/json"}
+    # Poomgo docs use raw KEY in Authorization (no Bearer).
+    return {"Authorization": token, "Content-Type": "application/json", "accept": "application/json"}
 
 
 def _poomgo_create_receiving(
