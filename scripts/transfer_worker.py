@@ -31,8 +31,10 @@ except Exception:  # pragma: no cover
 
 try:
     from ezadmin_inbound_request import create_inbound_request
-except Exception:  # pragma: no cover
+    _EZADMIN_IMPORT_ERROR = ""
+except Exception as e:  # pragma: no cover
     create_inbound_request = None  # type: ignore[assignment]
+    _EZADMIN_IMPORT_ERROR = str(e)
 
 SKU_NAME_TO_BARCODE = {
     "플라우드 노트 Pro / 블랙": "199284926073",
@@ -274,7 +276,7 @@ def main() -> None:
     # Ezadmin inbound processing (grouped by date/from/to)
     ez_headless = os.getenv("EZADMIN_HEADLESS", "1") != "0"
     if create_inbound_request is None:
-        print("[WARN] ezadmin_inbound_request not available.")
+        print(f"[WARN] ezadmin_inbound_request not available: {_EZADMIN_IMPORT_ERROR}")
     else:
         ez_groups: Dict[tuple, List[tuple]] = {}
         for row_idx, row in rows:
