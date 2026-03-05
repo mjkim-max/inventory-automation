@@ -17,6 +17,7 @@ SHEET_COLUMNS = {
     "note_silver": {"poomgo": "N", "ezadmin": "O", "coupang": "P"},
     "notepin_black": {"poomgo": "R", "ezadmin": "S", "coupang": "T"},
     "notepin_silver": {"poomgo": "V", "ezadmin": "W", "coupang": "X"},
+    "manual": {"poomgo": "Z", "ezadmin": "", "coupang": ""},
 }
 
 SKU_LABELS = {
@@ -26,6 +27,7 @@ SKU_LABELS = {
     "note_silver": "노트 실버",
     "notepin_black": "노트핀S 블랙",
     "notepin_silver": "노트핀S 실버",
+    "manual": "사용설명서",
 }
 
 
@@ -155,6 +157,8 @@ def _get_latest_date_row(values: List[List[str]]) -> int:
 
 
 def _row_value(row: List[str], col: str) -> str:
+    if not col:
+        return ""
     idx = _col_to_index(col) - 1
     if idx < len(row):
         return row[idx]
@@ -211,6 +215,8 @@ def _load_intake_rows(sheet) -> List[Dict[str, str]]:
 
 
 def _get_stock_series(values: List[List[str]], col: str) -> List[Tuple[datetime, int]]:
+    if not col:
+        return []
     date_col = _col_to_index(SHEET_COLUMNS["date"]) - 1
     stock_col = _col_to_index(col) - 1
     series: List[Tuple[datetime, int]] = []
