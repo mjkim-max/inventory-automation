@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -257,6 +258,9 @@ def create_inbound_request(
     password = _get_cfg_value(cfg, "ezadmin", "password", env="EZADMIN_PASSWORD")
     login_url = _get_cfg_value(cfg, "ezadmin", "login_url", env="EZADMIN_LOGIN_URL", default=LOGIN_URL_DEFAULT)
     inbound_url = _get_cfg_value(cfg, "ezadmin", "inbound_url", env="EZADMIN_INBOUND_URL", default=INBOUND_LIST_URL_DEFAULT)
+    parsed = urllib.parse.urlparse(inbound_url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    inbound_create_url = f\"{base}/popup35.htm?template=IM16\"
 
     if not domain or not username or not password:
         raise RuntimeError("ezadmin credentials missing (domain/username/password).")
@@ -292,13 +296,9 @@ def create_inbound_request(
             page.goto(inbound_url, wait_until="domcontentloaded")
             page.wait_for_timeout(1200)
 
-            # Create sheet (popup)
-            new_btn = _find_in_frames(page, ["#new_sheet", "button#new_sheet", "button:has-text('전표생성')", "text=전표생성"])
-            if not new_btn:
-                raise RuntimeError("전표생성 버튼을 찾지 못했습니다.")
-            create_popup = _open_popup_or_same(page, new_btn, context, wait_url_contains="template=IM16")
-            if create_popup is page:
-                raise RuntimeError("전표생성 팝업이 열리지 않았습니다.")
+            # Create sheet (open popup URL directly to avoid popup blocking)
+            create_popup = context.new_page()
+            create_popup.goto(inbound_create_url, wait_until="domcontentloaded")
             create_popup.wait_for_timeout(800)
 
             # Supplier select
@@ -329,19 +329,39 @@ def create_inbound_request(
             create_btn.first.click()
             create_popup.wait_for_timeout(800)
 
-            # Find created sheet and open detail (popup or same)
+            # Find created sheet and open detail (open href directly)
             page.wait_for_timeout(1200)
             sheet_link = _find_in_frames(page, [f"a:has-text('{display_name}')", f"a:has-text('{sheet_name}')"])
             if not sheet_link:
                 raise RuntimeError("생성된 전표 링크를 찾지 못했습니다.")
-            detail_popup = _open_popup_or_same(page, sheet_link, context, wait_url_contains="template=IM10")
+            href = sheet_link.first.get_attribute("href") or ""
+            if not href:
+                # fallback: click and detect popup
+                detail_popup = _open_popup_or_same(page, sheet_link, context, wait_url_contains="template=IM10")
+            else:
+                detail_url = urllib.parse.urljoin(base + "/", href)
+                detail_popup = context.new_page()
+                detail_popup.goto(detail_url, wait_until="domcontentloaded")
             detail_popup.wait_for_timeout(800)
 
-            # Open product add popup
-            add_btn = _find_in_frames(detail_popup, ["span:has-text('상품추가')", "text=상품추가", "a:has-text('상품추가')"])
-            if not add_btn:
-                raise RuntimeError("상품추가 버튼을 찾지 못했습니다.")
-            product_popup = _open_popup_or_same(detail_popup, add_btn, context, wait_url_contains="template=IM13")
+            # Open product add page directly using sheet id
+            sheet_id = None
+            try:
+                q = urllib.parse.urlparse(detail_popup.url).query
+                qs = urllib.parse.parse_qs(q)
+                sheet_id = (qs.get("sheet") or qs.get("seq") or [None])[0]
+            except Exception:
+                sheet_id = None
+            if not sheet_id:
+                # fallback: click add button
+                add_btn = _find_in_frames(detail_popup, ["span:has-text('상품추가')", "text=상품추가", "a:has-text('상품추가')"])
+                if not add_btn:
+                    raise RuntimeError("상품추가 버튼을 찾지 못했습니다.")
+                product_popup = _open_popup_or_same(detail_popup, add_btn, context, wait_url_contains="template=IM13")
+            else:
+                product_url = f\"{base}/popup35.htm?template=IM13&seq={sheet_id}\"
+                product_popup = context.new_page()
+                product_popup.goto(product_url, wait_until="domcontentloaded")
             product_popup.wait_for_timeout(800)
 
             # Search
