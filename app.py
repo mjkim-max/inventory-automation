@@ -436,6 +436,51 @@ def _calc_avg_outflow(
     return avg, days
 
 
+def _calc_avg_outflow_window(
+    series: List[Tuple[datetime, int]],
+    intake_rows: List[Dict[str, str]],
+    channel_label: str,
+    sku_label: str,
+    window_days: int,
+) -> Optional[float]:
+    if not series:
+        return None
+    today_dt, today_stock = series[-1]
+    target_dt = today_dt - timedelta(days=window_days)
+    candidates = [(dt, val) for dt, val in series if dt <= today_dt]
+    if not candidates:
+        return None
+    past_dt, past_stock = min(
+        candidates,
+        key=lambda x: abs((x[0] - target_dt).days),
+    )
+    days = (today_dt - past_dt).days
+    if days <= 0:
+        return None
+
+    intake_sum = 0
+    outbound_sum = 0
+    for r in intake_rows:
+        to_ch = str(r.get("channel", ""))
+        from_ch = str(r.get("from_channel", ""))
+        if str(r.get("sku_name", "")) != sku_label:
+            continue
+        dt = _parse_date(str(r.get("date", "")))
+        if not dt:
+            continue
+        if past_dt < dt <= today_dt:
+            qty = _safe_int(r.get("quantity", "0"))
+            if to_ch == channel_label:
+                intake_sum += qty
+            if from_ch == channel_label:
+                outbound_sum += qty
+
+    avg = (past_stock - today_stock + intake_sum - outbound_sum) / days
+    if avg < 0:
+        avg = 0.0
+    return avg
+
+
 def main() -> None:
     st.set_page_config(page_title="재고 대시보드", layout="wide")
     # Auto-refresh shortly after each top-of-hour update (align with hourly sheet writes)
@@ -567,7 +612,27 @@ def main() -> None:
             if recommend < 0:
                 recommend = 0
             recommend_text = str(recommend)
-            growth_recommend_text = str(recommend)
+            # Growth-adjusted using 30d vs 90d avg outflow (sum of channels)
+            avg_90_sum = 0.0
+            avg_30_sum = 0.0
+            for ch_key, ch_label in [("poomgo", "품고"), ("ezadmin", "이지어드민"), ("coupang", "쿠팡")]:
+                col = SHEET_COLUMNS[key][ch_key]
+                series = _get_stock_series(values, col)
+                avg_90_ch = _calc_avg_outflow_window(series, intake_rows, ch_label, label, 90)
+                avg_30_ch = _calc_avg_outflow_window(series, intake_rows, ch_label, label, 30)
+                if avg_90_ch:
+                    avg_90_sum += avg_90_ch
+                if avg_30_ch:
+                    avg_30_sum += avg_30_ch
+            r = (avg_30_sum / avg_90_sum) if avg_90_sum > 0 else 1.0
+            g = 1 + 0.5 * (r - 1)
+            g = max(0.7, min(1.3, g))
+            cover_demand_growth = avg_sum * g * cover_days
+            safety_stock_growth = cover_demand_growth * safety_factor
+            growth_recommend = int(round(cover_demand_growth + safety_stock_growth - stock_sum))
+            if growth_recommend < 0:
+                growth_recommend = 0
+            growth_recommend_text = str(growth_recommend)
         else:
             days_text = "-"
             recommend_text = "-"
