@@ -135,6 +135,26 @@ def _ensure_add_inventory_header(ws) -> None:
         ws.insert_row(header, index=1)
 
 
+def _ensure_transfer_queue_header(ws) -> None:
+    header = [
+        "date",
+        "from_channel",
+        "to_channel",
+        "sku_name",
+        "quantity",
+        "status",
+        "message",
+        "created_at",
+        "updated_at",
+    ]
+    values = ws.get_all_values()
+    if not values:
+        ws.append_row(header)
+        return
+    if values[0] != header:
+        ws.insert_row(header, index=1)
+
+
 def _get_latest_date_row(values: List[List[str]]) -> int:
     date_col = _col_to_index(SHEET_COLUMNS["date"]) - 1
     latest_idx = -1
@@ -430,7 +450,13 @@ def main() -> None:
                 except Exception:
                     add_ws = ss.add_worksheet(title="Add_inventory", rows=1000, cols=10)
                 _ensure_add_inventory_header(add_ws)
+                try:
+                    queue_ws = ss.worksheet("TransferQueue")
+                except Exception:
+                    queue_ws = ss.add_worksheet(title="TransferQueue", rows=2000, cols=12)
+                _ensure_transfer_queue_header(queue_ws)
                 appended = 0
+                queued = 0
                 for row in intake_df:
                     sku_name = str(row.get("품목명", "")).strip()
                     qty = row.get("입고수량", 0)
@@ -443,9 +469,24 @@ def main() -> None:
                             [date_value.strftime("%Y-%m-%d"), from_channel, channel, sku_name, qty_int],
                             value_input_option="USER_ENTERED",
                         )
+                        queue_ws.append_row(
+                            [
+                                date_value.strftime("%Y-%m-%d"),
+                                from_channel,
+                                channel,
+                                sku_name,
+                                qty_int,
+                                "PENDING",
+                                "",
+                                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "",
+                            ],
+                            value_input_option="USER_ENTERED",
+                        )
                         appended += 1
+                        queued += 1
                 if appended:
-                    st.success(f"입고 {appended}건이 저장되었습니다.")
+                    st.success(f"입고 {appended}건이 저장되었습니다. (큐 {queued}건 등록)")
                 else:
                     st.info("입고수량이 0인 항목은 저장되지 않습니다.")
 
