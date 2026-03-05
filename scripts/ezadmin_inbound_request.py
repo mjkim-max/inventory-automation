@@ -275,7 +275,7 @@ def _next_sheet_name(base_name: str, supplier_name: str, existing_names: List[st
         if max_suffix is None or suffix > max_suffix:
             max_suffix = suffix
     if max_suffix is None:
-        return base_name
+        return f"{base_name}_1"
     return f"{base_name}_{max_suffix + 1}"
 
 
@@ -283,11 +283,12 @@ def _normalize_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     normalized = []
     for item in items:
         sku_name = str(item.get("sku_name", "")).strip()
+        barcode = str(item.get("barcode", "")).strip()
         qty = int(item.get("quantity", 0) or 0)
         if not sku_name or qty <= 0:
             continue
         ez_name = SKU_TO_EZADMIN_NAME.get(sku_name, sku_name)
-        normalized.append({"sku_name": sku_name, "ez_name": ez_name, "quantity": qty})
+        normalized.append({"sku_name": sku_name, "ez_name": ez_name, "barcode": barcode, "quantity": qty})
     return normalized
 
 
@@ -342,6 +343,33 @@ def create_inbound_request(
             page.goto(inbound_url, wait_until="domcontentloaded")
             page.wait_for_timeout(1200)
 
+            # Pre-search by base name to gather existing sheets for suffixing
+            search_select = _find_in_frames(
+                page,
+                [
+                    "select[name*='search']",
+                    "select#search_kind",
+                    "select[name*='key']",
+                ],
+            )
+            if search_select:
+                _select_option_contains(search_select.first, "전표명")
+            search_input = _find_in_frames(
+                page,
+                [
+                    "input#search_word",
+                    "input[name*='keyword']",
+                    "input[name*='search']:not([type='hidden'])",
+                    "input[type='text'][name*='search']",
+                ],
+            )
+            if search_input:
+                search_input.first.fill(base_name)
+            search_btn = _find_in_frames(page, ["div#search", "div.table_search_button", "button:has-text('검색')", "text=검색"])
+            if search_btn:
+                search_btn.first.click()
+                page.wait_for_timeout(1200)
+
             # Compute next sheet name based on existing list (avoid duplicates)
             existing_names = _collect_sheet_names(page)
             sheet_name = _next_sheet_name(base_name, supplier_name, existing_names)
@@ -381,28 +409,8 @@ def create_inbound_request(
             create_popup.wait_for_timeout(800)
 
             # Search created sheet by name to ensure it is visible
-            search_select = _find_in_frames(
-                page,
-                [
-                    "select[name*='search']",
-                    "select#search_kind",
-                    "select[name*='key']",
-                ],
-            )
-            if search_select:
-                _select_option_contains(search_select.first, "전표명")
-            search_input = _find_in_frames(
-                page,
-                [
-                    "input#search_word",
-                    "input[name*='keyword']",
-                    "input[name*='search']:not([type='hidden'])",
-                    "input[type='text'][name*='search']",
-                ],
-            )
             if search_input:
                 search_input.first.fill(display_name)
-            search_btn = _find_in_frames(page, ["div#search", "div.table_search_button", "button:has-text('검색')", "text=검색"])
             if search_btn:
                 search_btn.first.click()
                 page.wait_for_timeout(1200)
@@ -494,41 +502,72 @@ def create_inbound_request(
             search_btn.first.click()
             product_popup.wait_for_timeout(1200)
 
-            # Find table with headers
-            table = product_popup.locator("table").first
-            headers = [h.strip() for h in table.locator("th").all_text_contents()]
-            if "상품명" not in headers or "입고수량" not in headers:
-                tables = product_popup.locator("table")
-                found = False
-                for i in range(tables.count()):
-                    t = tables.nth(i)
-                    hds = [h.strip() for h in t.locator("th").all_text_contents()]
-                    if "상품명" in hds and "입고수량" in hds:
-                        table = t
-                        headers = hds
-                        found = True
-                        break
-                if not found:
-                    raise RuntimeError("상품명/입고수량 컬럼을 찾지 못했습니다.")
+            # Wait for jqGrid rows to load
+            try:
+                product_popup.wait_for_function(
+                    "document.querySelectorAll('table#grid1 tbody tr').length > 0",
+                    timeout=20000,
+                )
+            except Exception:
+                pass
 
-            name_idx = headers.index("상품명")
-            qty_idx = headers.index("입고수량")
-            body_rows = table.locator("tbody tr")
-            for i in range(body_rows.count()):
-                row = body_rows.nth(i)
-                cells = row.locator("td")
-                if cells.count() <= max(name_idx, qty_idx):
-                    continue
-                name_text = cells.nth(name_idx).inner_text().strip()
-                for item in normalized_items:
-                    if item["ez_name"] in name_text:
-                        qty_cell = cells.nth(qty_idx)
-                        inp = qty_cell.locator("input")
-                        if inp.count() > 0:
-                            inp.first.fill(str(item["quantity"]))
+            def _norm_barcode(val: str) -> str:
+                return re.sub(r"\\D+", "", val or "")
+
+            barcode_to_qty = {}
+            name_to_qty = {}
+            for item in normalized_items:
+                if item.get("barcode"):
+                    barcode_to_qty[_norm_barcode(item["barcode"])] = int(item["quantity"])
+                name_to_qty[item["ez_name"]] = int(item["quantity"])
+
+            product_popup.evaluate(
+                """
+                ({ barcodeToQty, nameToQty }) => {
+                  const norm = (v) => (v || '').replace(/\\D+/g, '');
+                  const rows = document.querySelectorAll('table#grid1 tbody tr');
+                  rows.forEach((row) => {
+                    const nameCell = row.querySelector("td[aria-describedby$='col3']");
+                    const barcodeCell = row.querySelector("td[aria-describedby$='col20']");
+                    const nameText = nameCell ? nameCell.textContent.trim() : '';
+                    const barcodeText = barcodeCell ? norm(barcodeCell.textContent) : '';
+                    let qty = null;
+                    if (barcodeText && barcodeToQty[barcodeText] != null) {
+                      qty = barcodeToQty[barcodeText];
+                    } else {
+                      for (const [name, val] of Object.entries(nameToQty)) {
+                        if (name && nameText.includes(name)) {
+                          qty = val;
+                          break;
+                        }
+                      }
+                    }
+                    if (qty == null) return;
+                    const input =
+                      row.querySelector('td.stockin_qty input') ||
+                      row.querySelector("td[aria-describedby$='col6'] input.stockin_qty") ||
+                      row.querySelector("td[aria-describedby$='col6'] input");
+                    if (input) {
+                      input.value = String(qty);
+                      input.dispatchEvent(new Event('input', { bubbles: true }));
+                      input.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                  });
+                }
+                """,
+                {"barcodeToQty": barcode_to_qty, "nameToQty": name_to_qty},
+            )
 
             # Click insert all
-            insert_all = _find_in_frames(product_popup, ["a:has-text('전체추가')", "text=전체추가"])
+            insert_all = _find_in_frames(
+                product_popup,
+                [
+                    "a[onclick*='insert_all']",
+                    "span.ez_btn_mini.ez_btn_grey a:has-text('전체추가')",
+                    "a:has-text('전체추가')",
+                    "text=전체추가",
+                ],
+            )
             if not insert_all:
                 raise RuntimeError("전체추가 버튼을 찾지 못했습니다.")
             insert_all.first.click()

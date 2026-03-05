@@ -339,9 +339,12 @@ def main() -> None:
         for (date_str, from_channel, _to_channel), group_rows in ez_groups.items():
             items = []
             for _row_idx, row in group_rows:
+                sku_name = _get(row, header_idx.get("sku_name", -1))
+                barcode = SKU_NAME_TO_BARCODE.get(sku_name)
                 items.append(
                     {
-                        "sku_name": _get(row, header_idx.get("sku_name", -1)),
+                        "sku_name": sku_name,
+                        "barcode": barcode or "",
                         "quantity": _get(row, header_idx.get("quantity", -1)),
                     }
                 )

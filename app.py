@@ -583,7 +583,7 @@ def main() -> None:
                     tq_values = tq_ws.get_all_values()
                     tq_header = tq_values[0] if tq_values else []
                     tq_idx = {name: j for j, name in enumerate(tq_header)}
-                    for row in tq_values[1:]:
+                    for row_i, row in enumerate(tq_values[1:], start=2):
                         if not row:
                             continue
                         date = row[tq_idx.get("date", -1)] if tq_idx.get("date", -1) >= 0 else ""
@@ -595,8 +595,8 @@ def main() -> None:
                         updated = row[tq_idx.get("updated_at", -1)] if tq_idx.get("updated_at", -1) >= 0 else ""
                         key = (str(date), str(from_ch), str(to_ch), str(sku), str(qty))
                         prev = tq_status_map.get(key)
-                        if not prev or str(updated) >= str(prev.get("updated", "")):
-                            tq_status_map[key] = {"status": status, "updated": updated}
+                        if not prev or row_i >= int(prev.get("row_i", 0)):
+                            tq_status_map[key] = {"status": status, "updated": updated, "row_i": row_i}
                 except Exception:
                     tq_status_map = {}
 
