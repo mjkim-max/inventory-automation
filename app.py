@@ -889,6 +889,51 @@ def main() -> None:
             return 0.0
         return total / days
 
+    def _fallback_avg_from_stock(
+        values: List[List[str]],
+        intake_rows: List[Dict[str, str]],
+        sku_key: str,
+    ) -> float:
+        cols = SHEET_COLUMNS.get(sku_key, {})
+        if not cols:
+            return 0.0
+        date_col = _col_to_index(SHEET_COLUMNS["date"]) - 1
+        series: List[Tuple[datetime, int]] = []
+        for row in values:
+            if date_col >= len(row):
+                continue
+            dt = _parse_date(row[date_col].strip())
+            if not dt:
+                continue
+            total = 0
+            for ch in ("poomgo", "ezadmin", "coupang"):
+                col = cols.get(ch, "")
+                if col:
+                    total += _safe_int(_row_value(row, col))
+            series.append((dt, total))
+        if len(series) < 2:
+            return 0.0
+        series.sort(key=lambda x: x[0])
+        past_dt, past_stock = series[0]
+        today_dt, today_stock = series[-1]
+        days = (today_dt - past_dt).days
+        if days <= 0:
+            return 0.0
+        intake_sum = 0
+        sku_label = SKU_LABELS.get(sku_key, "")
+        for r in intake_rows:
+            if str(r.get("sku_name", "")) != sku_label:
+                continue
+            dt = _parse_date(str(r.get("date", "")))
+            if not dt:
+                continue
+            if past_dt < dt <= today_dt:
+                intake_sum += _safe_int(r.get("quantity", "0"))
+        avg = (past_stock - today_stock + intake_sum) / days
+        if avg < 0:
+            avg = 0.0
+        return avg
+
     order_rows = []
     for key, label in SKU_LABELS.items():
         # Skip manual for order recommendation
@@ -896,6 +941,10 @@ def main() -> None:
             continue
         avg_90 = _avg_daily(sales_hist, label, 90)
         avg_30 = _avg_daily(sales_hist, label, 30)
+        if avg_90 == 0.0 and avg_30 == 0.0:
+            fallback_avg = _fallback_avg_from_stock(values, intake_rows, key)
+            avg_90 = fallback_avg
+            avg_30 = fallback_avg
         r = (avg_30 / avg_90) if avg_90 > 0 else 1.0
         g = 1 + growth_weight * (r - 1)
         g = max(growth_cap[0], min(growth_cap[1], g))
