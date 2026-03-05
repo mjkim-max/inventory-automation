@@ -269,7 +269,6 @@ def fetch_ezadmin_stock(
             "--disable-features=Crashpad",
             "--no-crashpad",
             "--no-sandbox",
-            f"--user-data-dir={profile_dir}",
         ]
         tmp_home = tempfile.mkdtemp(prefix="ezadmin_chrome_home_")
         launch_env = os.environ.copy()
