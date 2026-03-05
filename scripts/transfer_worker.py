@@ -176,8 +176,10 @@ def _ensure_transfer_queue_header(ws) -> None:
     if not values:
         ws.append_row(header)
         return
-    if values[0] != header:
-        ws.insert_row(header, index=1)
+    # If header row exists but columns differ (e.g., new sheet_name), overwrite row 1
+    first = values[0]
+    if first[: len(header)] != header:
+        ws.update("A1", [header])
 
 
 def _col_letter(idx: int) -> str:
