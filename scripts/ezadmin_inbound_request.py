@@ -245,6 +245,40 @@ def _build_sheet_name(date_str: str, from_channel: str) -> str:
     return f"{ymd}_{from_channel}_이지어드민_입고"
 
 
+def _collect_sheet_names(page) -> List[str]:
+    tables = page.locator("table")
+    for i in range(tables.count()):
+        t = tables.nth(i)
+        headers = [h.strip() for h in t.locator("th").all_text_contents()]
+        if "전표명" in headers:
+            name_idx = headers.index("전표명")
+            rows = t.locator("tbody tr")
+            names = []
+            for r in range(rows.count()):
+                cells = rows.nth(r).locator("td")
+                if cells.count() > name_idx:
+                    txt = cells.nth(name_idx).inner_text().strip()
+                    if txt:
+                        names.append(txt)
+            return names
+    return []
+
+
+def _next_sheet_name(base_name: str, supplier_name: str, existing_names: List[str]) -> str:
+    pattern = re.compile(rf"^{re.escape(base_name)}(?:_(\\d+))?_{re.escape(supplier_name)}$")
+    max_suffix = None
+    for name in existing_names:
+        m = pattern.match(name)
+        if not m:
+            continue
+        suffix = int(m.group(1) or 0)
+        if max_suffix is None or suffix > max_suffix:
+            max_suffix = suffix
+    if max_suffix is None:
+        return base_name
+    return f"{base_name}_{max_suffix + 1}"
+
+
 def _normalize_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     normalized = []
     for item in items:
@@ -282,8 +316,7 @@ def create_inbound_request(
     if not normalized_items:
         raise RuntimeError("no valid items to register.")
 
-    sheet_name = _build_sheet_name(date_str, from_channel)
-    display_name = f"{sheet_name}_{supplier_name}"
+    base_name = _build_sheet_name(date_str, from_channel)
 
     with sync_playwright() as p:
         channel = os.getenv("EZADMIN_CHROME_CHANNEL", "").strip()
@@ -308,6 +341,11 @@ def create_inbound_request(
 
             page.goto(inbound_url, wait_until="domcontentloaded")
             page.wait_for_timeout(1200)
+
+            # Compute next sheet name based on existing list (avoid duplicates)
+            existing_names = _collect_sheet_names(page)
+            sheet_name = _next_sheet_name(base_name, supplier_name, existing_names)
+            display_name = f"{sheet_name}_{supplier_name}"
 
             # Create sheet (open popup URL directly to avoid popup blocking)
             create_popup = context.new_page()
@@ -363,7 +401,7 @@ def create_inbound_request(
                 ],
             )
             if search_input:
-                search_input.first.fill(sheet_name)
+                search_input.first.fill(display_name)
             search_btn = _find_in_frames(page, ["div#search", "div.table_search_button", "button:has-text('검색')", "text=검색"])
             if search_btn:
                 search_btn.first.click()
