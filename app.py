@@ -546,6 +546,7 @@ def main() -> None:
         intake_rows = []
         intake_groups = []
         tq_status_map = {}
+        filter_date = st.date_input("날짜 필터", value=None)
         try:
             add_ws = _connect_sheet(readonly=True).spreadsheet.worksheet("Add_inventory")
             intake_values = add_ws.get_all_values()
@@ -563,7 +564,12 @@ def main() -> None:
                         continue
                     if len(r) >= 1 and str(r[0]).strip().lower() == "date":
                         continue
-                    data_rows.append((i, dict(zip(header, r))))
+                    row_dict = dict(zip(header, r))
+                    row_date = str(_val(row_dict, "date"))
+                    if filter_date:
+                        if row_date != filter_date.strftime("%Y-%m-%d"):
+                            continue
+                    data_rows.append((i, row_dict))
 
                 # Load transfer queue status for matching rows (best-effort)
                 try:
@@ -634,6 +640,31 @@ def main() -> None:
                         deleted = False
                         try:
                             add_ws = _connect_sheet(readonly=False).spreadsheet.worksheet("Add_inventory")
+                            # Queue cancel for matching transfer rows (if any)
+                            try:
+                                tq_ws = _connect_sheet(readonly=False).spreadsheet.worksheet("TransferQueue")
+                                tq_values = tq_ws.get_all_values()
+                                tq_header = tq_values[0] if tq_values else []
+                                tq_idx = {name: j for j, name in enumerate(tq_header)}
+                                now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                for i, tq_row in enumerate(tq_values[1:], start=2):
+                                    if not tq_row:
+                                        continue
+                                    t_date = tq_row[tq_idx.get("date", -1)] if tq_idx.get("date", -1) >= 0 else ""
+                                    t_from = tq_row[tq_idx.get("from_channel", -1)] if tq_idx.get("from_channel", -1) >= 0 else ""
+                                    t_to = tq_row[tq_idx.get("to_channel", -1)] if tq_idx.get("to_channel", -1) >= 0 else ""
+                                    if str(t_date) == str(date_val) and str(t_from) == str(from_ch) and str(t_to) == str(to_ch):
+                                        action_col = tq_idx.get("action", -1) + 1
+                                        status_col = tq_idx.get("status", -1) + 1
+                                        updated_col = tq_idx.get("updated_at", -1) + 1
+                                        if action_col > 0:
+                                            tq_ws.update_cell(i, action_col, "CANCEL")
+                                        if status_col > 0:
+                                            tq_ws.update_cell(i, status_col, "CANCEL_PENDING")
+                                        if updated_col > 0:
+                                            tq_ws.update_cell(i, updated_col, now_ts)
+                            except Exception:
+                                pass
                             # delete from bottom to top to keep indices stable
                             for row_idx, _ in sorted(rows, key=lambda x: x[0], reverse=True):
                                 add_ws.delete_rows(row_idx)
@@ -644,47 +675,6 @@ def main() -> None:
                         if deleted:
                             st.experimental_rerun()
 
-        st.divider()
-        st.subheader("품고 입고요청 취소")
-        try:
-            tq_ws = _connect_sheet(readonly=False).spreadsheet.worksheet("TransferQueue")
-            tq_values = tq_ws.get_all_values()
-            tq_header = tq_values[0] if tq_values else []
-            if tq_header:
-                idx = {name: i for i, name in enumerate(tq_header)}
-                candidates = []
-                for i, row in enumerate(tq_values[1:], start=2):
-                    to_channel = row[idx.get("to_channel", -1)] if idx.get("to_channel", -1) >= 0 else ""
-                    status = row[idx.get("status", -1)] if idx.get("status", -1) >= 0 else ""
-                    external_id = row[idx.get("external_id", -1)] if idx.get("external_id", -1) >= 0 else ""
-                    if to_channel == "품고" and status == "SUCCESS" and str(external_id).strip():
-                        label = (
-                            f"{row[idx.get('date',0)]} | {row[idx.get('from_channel',0)]} -> {to_channel} | "
-                            f"{row[idx.get('sku_name',0)]} | {row[idx.get('quantity',0)]} | id={external_id}"
-                        )
-                        candidates.append((i, label))
-                if candidates:
-                    options = [c[1] for c in candidates]
-                    pick = st.selectbox("취소 대상", options)
-                    if st.button("입고요청 취소"):
-                        row_idx = candidates[options.index(pick)][0]
-                        action_col = idx.get("action", -1) + 1
-                        status_col = idx.get("status", -1) + 1
-                        updated_col = idx.get("updated_at", -1) + 1
-                        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        if action_col > 0:
-                            tq_ws.update_cell(row_idx, action_col, "CANCEL")
-                        if status_col > 0:
-                            tq_ws.update_cell(row_idx, status_col, "CANCEL_PENDING")
-                        if updated_col > 0:
-                            tq_ws.update_cell(row_idx, updated_col, now_ts)
-                        st.success("취소 요청이 큐에 등록되었습니다.")
-                else:
-                    st.info("취소 가능한 품고 입고요청이 없습니다.")
-            else:
-                st.info("TransferQueue 탭이 비어 있습니다.")
-        except Exception:
-            st.info("TransferQueue 탭을 불러올 수 없습니다.")
 
     st.divider()
     st.subheader("판매수량")
