@@ -17,10 +17,8 @@ if [ -z "$PY" ]; then
   exit 1
 fi
 
-# Prefer system Chrome if installed (more stable on macOS GUI sessions)
-if [ -d "/Applications/Google Chrome.app" ]; then
-  export EZADMIN_CHROME_CHANNEL=chrome
-fi
+# Force Playwright Chromium to avoid Chrome permission issues
+unset EZADMIN_CHROME_CHANNEL
 export EZADMIN_BROWSER=chromium
 export EZADMIN_ALLOW_FALLBACK=0
 # Optional: set to 1 for headless mode (may break some logins)
