@@ -93,6 +93,35 @@ def _find_in_frames(page, selectors: List[str]):
     return None
 
 
+def _debug_dump(page, label: str) -> None:
+    try:
+        debug_dir = Path(__file__).resolve().parents[1] / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if page and not page.is_closed():
+            page.screenshot(path=str(debug_dir / f"ezadmin_{label}_{ts}.png"), full_page=True)
+            (debug_dir / f"ezadmin_{label}_{ts}.html").write_text(page.content(), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _open_popup_or_same(page, click_locator, wait_url_contains: Optional[str] = None):
+    try:
+        with page.expect_popup(timeout=5000) as popup_info:
+            click_locator.first.click()
+        popup = popup_info.value
+        popup.wait_for_timeout(500)
+        return popup
+    except PlaywrightTimeoutError:
+        click_locator.first.click()
+        if wait_url_contains:
+            try:
+                page.wait_for_url(f"**{wait_url_contains}**", timeout=5000)
+            except Exception:
+                pass
+        return page
+
+
 def _fill_labeled_input(scope, label_text: str, value: str) -> bool:
     # Try table label -> input
     loc = scope.locator(
@@ -241,121 +270,113 @@ def create_inbound_request(
         else:
             browser = p.chromium.launch(headless=headless, args=launch_args, env=launch_env)
         page = browser.new_page()
-        _login_ezadmin(page, domain=domain, username=username, password=password, login_url=login_url)
-
-        page.goto(inbound_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(1200)
-
-        # Create sheet (popup)
-        new_btn = _find_in_frames(page, ["#new_sheet", "button#new_sheet", "button:has-text('전표생성')", "text=전표생성"])
-        if not new_btn:
-            raise RuntimeError("전표생성 버튼을 찾지 못했습니다.")
-        with page.expect_popup() as popup_info:
-            new_btn.first.click()
-        create_popup = popup_info.value
-        create_popup.wait_for_timeout(800)
-
-        # Supplier select
-        supplier_select = _find_in_frames(create_popup, ["select", "select[name*='cust']", "select[name*='supplier']"])
-        if supplier_select:
-            try:
-                supplier_select.first.select_option(label=supplier_name)
-            except Exception:
-                # fallback: choose option containing supplier_name
-                opts = supplier_select.first.locator("option")
-                for i in range(opts.count()):
-                    txt = opts.nth(i).text_content() or ""
-                    if supplier_name in txt:
-                        supplier_select.first.select_option(value=opts.nth(i).get_attribute("value"))
-                        break
-
-        # Sheet name input
-        if not _fill_labeled_input(create_popup, "전표이름", sheet_name):
-            name_input = _find_in_frames(
-                create_popup,
-                ["input[name*='sheet']", "input[name*='subject']", "input[name*='title']", "input[type='text']"],
-            )
-            if name_input:
-                name_input.first.fill(sheet_name)
-
-        create_btn = _find_in_frames(create_popup, ["span:has-text('전표생성')", "button:has-text('전표생성')", "text=전표생성"])
-        if not create_btn:
-            raise RuntimeError("전표생성 확인 버튼을 찾지 못했습니다.")
-        create_btn.first.click()
-        create_popup.wait_for_timeout(800)
         try:
-            create_popup.close()
+            _login_ezadmin(page, domain=domain, username=username, password=password, login_url=login_url)
+
+            page.goto(inbound_url, wait_until="domcontentloaded")
+            page.wait_for_timeout(1200)
+
+            # Create sheet (popup)
+            new_btn = _find_in_frames(page, ["#new_sheet", "button#new_sheet", "button:has-text('전표생성')", "text=전표생성"])
+            if not new_btn:
+                raise RuntimeError("전표생성 버튼을 찾지 못했습니다.")
+            create_popup = _open_popup_or_same(page, new_btn)
+            create_popup.wait_for_timeout(800)
+
+            # Supplier select
+            supplier_select = _find_in_frames(create_popup, ["select", "select[name*='cust']", "select[name*='supplier']"])
+            if supplier_select:
+                try:
+                    supplier_select.first.select_option(label=supplier_name)
+                except Exception:
+                    opts = supplier_select.first.locator("option")
+                    for i in range(opts.count()):
+                        txt = opts.nth(i).text_content() or ""
+                        if supplier_name in txt:
+                            supplier_select.first.select_option(value=opts.nth(i).get_attribute("value"))
+                            break
+
+            # Sheet name input
+            if not _fill_labeled_input(create_popup, "전표이름", sheet_name):
+                name_input = _find_in_frames(
+                    create_popup,
+                    ["input[name*='sheet']", "input[name*='subject']", "input[name*='title']", "input[type='text']"],
+                )
+                if name_input:
+                    name_input.first.fill(sheet_name)
+
+            create_btn = _find_in_frames(create_popup, ["span:has-text('전표생성')", "button:has-text('전표생성')", "text=전표생성"])
+            if not create_btn:
+                raise RuntimeError("전표생성 확인 버튼을 찾지 못했습니다.")
+            create_btn.first.click()
+            create_popup.wait_for_timeout(800)
+
+            # Find created sheet and open detail (popup or same)
+            page.wait_for_timeout(1200)
+            sheet_link = _find_in_frames(page, [f"a:has-text('{display_name}')", f"a:has-text('{sheet_name}')"])
+            if not sheet_link:
+                raise RuntimeError("생성된 전표 링크를 찾지 못했습니다.")
+            detail_popup = _open_popup_or_same(page, sheet_link, wait_url_contains="template=IM10")
+            detail_popup.wait_for_timeout(800)
+
+            # Open product add popup
+            add_btn = _find_in_frames(detail_popup, ["span:has-text('상품추가')", "text=상품추가", "a:has-text('상품추가')"])
+            if not add_btn:
+                raise RuntimeError("상품추가 버튼을 찾지 못했습니다.")
+            product_popup = _open_popup_or_same(detail_popup, add_btn, wait_url_contains="template=IM13")
+            product_popup.wait_for_timeout(800)
+
+            # Search
+            search_btn = _find_in_frames(product_popup, ["div#search", "div.table_search_button", "button:has-text('검색')", "text=검색"])
+            if not search_btn:
+                raise RuntimeError("검색 버튼을 찾지 못했습니다.")
+            search_btn.first.click()
+            product_popup.wait_for_timeout(1200)
+
+            # Find table with headers
+            table = product_popup.locator("table").first
+            headers = [h.strip() for h in table.locator("th").all_text_contents()]
+            if "상품명" not in headers or "입고수량" not in headers:
+                tables = product_popup.locator("table")
+                found = False
+                for i in range(tables.count()):
+                    t = tables.nth(i)
+                    hds = [h.strip() for h in t.locator("th").all_text_contents()]
+                    if "상품명" in hds and "입고수량" in hds:
+                        table = t
+                        headers = hds
+                        found = True
+                        break
+                if not found:
+                    raise RuntimeError("상품명/입고수량 컬럼을 찾지 못했습니다.")
+
+            name_idx = headers.index("상품명")
+            qty_idx = headers.index("입고수량")
+            body_rows = table.locator("tbody tr")
+            for i in range(body_rows.count()):
+                row = body_rows.nth(i)
+                cells = row.locator("td")
+                if cells.count() <= max(name_idx, qty_idx):
+                    continue
+                name_text = cells.nth(name_idx).inner_text().strip()
+                for item in normalized_items:
+                    if item["ez_name"] in name_text:
+                        qty_cell = cells.nth(qty_idx)
+                        inp = qty_cell.locator("input")
+                        if inp.count() > 0:
+                            inp.first.fill(str(item["quantity"]))
+
+            # Click insert all
+            insert_all = _find_in_frames(product_popup, ["a:has-text('전체추가')", "text=전체추가"])
+            if not insert_all:
+                raise RuntimeError("전체추가 버튼을 찾지 못했습니다.")
+            insert_all.first.click()
+            product_popup.wait_for_timeout(800)
+
+            return {"sheet_name": sheet_name, "display_name": display_name}
         except Exception:
-            pass
-
-        # Find created sheet and open detail (popup)
-        page.wait_for_timeout(1200)
-        sheet_link = _find_in_frames(page, [f"a:has-text('{display_name}')", f"a:has-text('{sheet_name}')"])
-        if not sheet_link:
-            raise RuntimeError("생성된 전표 링크를 찾지 못했습니다.")
-        with page.expect_popup() as detail_popup_info:
-            sheet_link.first.click()
-        detail_popup = detail_popup_info.value
-        detail_popup.wait_for_timeout(800)
-
-        # Open product add popup
-        add_btn = _find_in_frames(detail_popup, ["span:has-text('상품추가')", "text=상품추가", "a:has-text('상품추가')"])
-        if not add_btn:
-            raise RuntimeError("상품추가 버튼을 찾지 못했습니다.")
-        with detail_popup.expect_popup() as product_popup_info:
-            add_btn.first.click()
-        product_popup = product_popup_info.value
-        product_popup.wait_for_timeout(800)
-
-        # Search
-        search_btn = _find_in_frames(product_popup, ["div#search", "div.table_search_button", "button:has-text('검색')", "text=검색"])
-        if not search_btn:
-            raise RuntimeError("검색 버튼을 찾지 못했습니다.")
-        search_btn.first.click()
-        product_popup.wait_for_timeout(1200)
-
-        # Find table with headers
-        table = product_popup.locator("table").first
-        headers = [h.strip() for h in table.locator("th").all_text_contents()]
-        if "상품명" not in headers or "입고수량" not in headers:
-            # fallback: search all tables
-            tables = product_popup.locator("table")
-            found = False
-            for i in range(tables.count()):
-                t = tables.nth(i)
-                hds = [h.strip() for h in t.locator("th").all_text_contents()]
-                if "상품명" in hds and "입고수량" in hds:
-                    table = t
-                    headers = hds
-                    found = True
-                    break
-            if not found:
-                raise RuntimeError("상품명/입고수량 컬럼을 찾지 못했습니다.")
-
-        name_idx = headers.index("상품명")
-        qty_idx = headers.index("입고수량")
-        body_rows = table.locator("tbody tr")
-        for i in range(body_rows.count()):
-            row = body_rows.nth(i)
-            cells = row.locator("td")
-            if cells.count() <= max(name_idx, qty_idx):
-                continue
-            name_text = cells.nth(name_idx).inner_text().strip()
-            for item in normalized_items:
-                if item["ez_name"] in name_text:
-                    qty_cell = cells.nth(qty_idx)
-                    inp = qty_cell.locator("input")
-                    if inp.count() > 0:
-                        inp.first.fill(str(item["quantity"]))
-
-        # Click insert all
-        insert_all = _find_in_frames(product_popup, ["a:has-text('전체추가')", "text=전체추가"])
-        if not insert_all:
-            raise RuntimeError("전체추가 버튼을 찾지 못했습니다.")
-        insert_all.first.click()
-        product_popup.wait_for_timeout(800)
-
-        return {"sheet_name": sheet_name, "display_name": display_name}
+            _debug_dump(page, "inbound_error")
+            raise
 
 
 if __name__ == "__main__":
