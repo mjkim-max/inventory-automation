@@ -678,7 +678,8 @@ def main() -> None:
                             }
                         )
                     st.dataframe(display_rows, use_container_width=True, hide_index=True)
-                    if st.button("등록 삭제", key=f"delete_{date_val}_{from_ch}_{to_ch}"):
+                    delete_key = f"delete_{date_val}_{from_ch}_{to_ch}_{created_val}"
+                    if st.button("등록 삭제", key=delete_key):
                         deleted = False
                         try:
                             add_ws = _connect_sheet(readonly=False).spreadsheet.worksheet("Add_inventory")
