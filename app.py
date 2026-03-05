@@ -460,12 +460,20 @@ def main() -> None:
                     ss = write_ws.spreadsheet
                     add_ws = ss.worksheet("Add_inventory")
                 except Exception:
-                    add_ws = ss.add_worksheet(title="Add_inventory", rows=1000, cols=10)
+                    try:
+                        add_ws = ss.add_worksheet(title="Add_inventory", rows=1000, cols=10)
+                    except Exception as e:
+                        st.error(f"시트 연결 실패: {e}")
+                        st.stop()
                 _ensure_add_inventory_header(add_ws)
                 try:
                     queue_ws = ss.worksheet("TransferQueue")
                 except Exception:
-                    queue_ws = ss.add_worksheet(title="TransferQueue", rows=2000, cols=12)
+                    try:
+                        queue_ws = ss.add_worksheet(title="TransferQueue", rows=2000, cols=12)
+                    except Exception as e:
+                        st.error(f"TransferQueue 생성 실패: {e}")
+                        st.stop()
                 _ensure_transfer_queue_header(queue_ws)
                 appended = 0
                 queued = 0
@@ -478,26 +486,34 @@ def main() -> None:
                     except Exception:
                         qty_int = 0
                     if sku_name and qty_int > 0:
-                        add_ws.append_row(
-                            [date_value.strftime("%Y-%m-%d"), from_channel, channel, sku_name, qty_int],
-                            value_input_option="USER_ENTERED",
-                        )
-                        queue_ws.append_row(
-                            [
-                                date_value.strftime("%Y-%m-%d"),
-                                from_channel,
-                                channel,
-                                sku_name,
-                                qty_int,
-                                "PENDING",
-                                "",
-                                now_ts,
-                                "",
-                                "",
-                                "",
-                            ],
-                            value_input_option="USER_ENTERED",
-                        )
+                        try:
+                            add_ws.append_row(
+                                [date_value.strftime("%Y-%m-%d"), from_channel, channel, sku_name, qty_int],
+                                value_input_option="USER_ENTERED",
+                            )
+                        except Exception as e:
+                            st.error(f"입고 저장 실패: {e}")
+                            continue
+                        try:
+                            queue_ws.append_row(
+                                [
+                                    date_value.strftime("%Y-%m-%d"),
+                                    from_channel,
+                                    channel,
+                                    sku_name,
+                                    qty_int,
+                                    "PENDING",
+                                    "",
+                                    now_ts,
+                                    "",
+                                    "",
+                                    "",
+                                ],
+                                value_input_option="USER_ENTERED",
+                            )
+                        except Exception as e:
+                            st.error(f"TransferQueue 저장 실패: {e}")
+                            continue
                         appended += 1
                         queued += 1
                 if appended:
