@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 
 import streamlit as st
+import streamlit.components.v1 as components
 import gspread
 from google.oauth2.service_account import Credentials
 import json
@@ -274,6 +275,12 @@ def _calc_avg_outflow(
 
 def main() -> None:
     st.set_page_config(page_title="재고 대시보드", layout="wide")
+    # Auto-refresh every hour to pick up latest sheet data
+    components.html(
+        "<script>setTimeout(() => { window.location.reload(); }, 3600000);</script>",
+        height=0,
+        width=0,
+    )
     header_left, header_right = st.columns([3, 1])
     with header_left:
         st.title("재고 대시보드")
@@ -499,21 +506,10 @@ def main() -> None:
 
     st.divider()
     st.subheader("판매수량")
-    if "sales_snapshot" not in st.session_state:
-        try:
-            st.session_state["sales_snapshot"] = _get_latest_sales_snapshot()
-        except Exception:
-            st.session_state["sales_snapshot"] = {}
-
-    _, col_s2 = st.columns([1, 1])
-    with col_s2:
-        if st.button("판매수량 새로고침"):
-            with st.spinner("시트에서 판매수량 로딩 중..."):
-                try:
-                    st.session_state["sales_snapshot"] = _get_latest_sales_snapshot()
-                    st.success("판매수량 로딩 완료")
-                except Exception as e:
-                    st.error(f"판매수량 로딩 실패: {e}")
+    try:
+        st.session_state["sales_snapshot"] = _get_latest_sales_snapshot()
+    except Exception:
+        st.session_state["sales_snapshot"] = {}
 
     snap = st.session_state.get("sales_snapshot", {})
     snap_date = snap.get("date", "-") if isinstance(snap, dict) else "-"
