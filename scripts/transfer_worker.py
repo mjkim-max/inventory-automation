@@ -240,11 +240,15 @@ def main() -> None:
     pallet_count_raw = recv_cfg.get("pallet_count") or os.getenv("POOMGO_PALLET_COUNT", "")
     box_count_raw = recv_cfg.get("box_count") or os.getenv("POOMGO_BOX_COUNT", "")
 
-    def _to_int(val: Any) -> int:
+    def _to_int(val: Any):
+        if val is None:
+            return None
+        if isinstance(val, str) and not val.strip():
+            return None
         try:
             return int(val)
         except Exception:
-            return 0
+            return None
 
     pallet_count = _to_int(pallet_count_raw)
     box_count = _to_int(box_count_raw)
@@ -310,9 +314,9 @@ def main() -> None:
             missing.append("schedule_form_code_key")
         if not delivery_type:
             missing.append("delivery_type")
-        if pallet_count <= 0:
+        if pallet_count is None:
             missing.append("pallet_count")
-        if box_count <= 0:
+        if box_count is None:
             missing.append("box_count")
         if missing:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
