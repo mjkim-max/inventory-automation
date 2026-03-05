@@ -78,6 +78,12 @@ def _patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
 socket.getaddrinfo = _patched_getaddrinfo
 
 
+def _norm_str(val: Any) -> str:
+    if val is None:
+        return ""
+    return str(val).strip()
+
+
 def _load_toml(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
@@ -332,11 +338,11 @@ def _run_once() -> None:
     else:
         ez_groups: Dict[tuple, List[tuple]] = {}
         for row_idx, row in rows:
-            status = _get(row, header_idx.get("status", -1))
-            action = _get(row, header_idx.get("action", -1))
-            to_channel = _get(row, header_idx.get("to_channel", -1))
-            from_channel = _get(row, header_idx.get("from_channel", -1))
-            date_str = _get(row, header_idx.get("date", -1))
+            status = _norm_str(_get(row, header_idx.get("status", -1)))
+            action = _norm_str(_get(row, header_idx.get("action", -1)))
+            to_channel = _norm_str(_get(row, header_idx.get("to_channel", -1)))
+            from_channel = _norm_str(_get(row, header_idx.get("from_channel", -1)))
+            date_str = _norm_str(_get(row, header_idx.get("date", -1)))
             if action == "CANCEL":
                 continue
             if status not in {"", "PENDING"}:
@@ -396,11 +402,11 @@ def _run_once() -> None:
     else:
         ez_out_groups: Dict[tuple, List[tuple]] = {}
         for row_idx, row in rows:
-            status = _get(row, header_idx.get("status", -1))
-            action = _get(row, header_idx.get("action", -1))
-            to_channel = _get(row, header_idx.get("to_channel", -1))
-            from_channel = _get(row, header_idx.get("from_channel", -1))
-            date_str = _get(row, header_idx.get("date", -1))
+            status = _norm_str(_get(row, header_idx.get("status", -1)))
+            action = _norm_str(_get(row, header_idx.get("action", -1)))
+            to_channel = _norm_str(_get(row, header_idx.get("to_channel", -1)))
+            from_channel = _norm_str(_get(row, header_idx.get("from_channel", -1)))
+            date_str = _norm_str(_get(row, header_idx.get("date", -1)))
             if action == "CANCEL":
                 continue
             if status not in {"", "PENDING"}:
@@ -451,14 +457,14 @@ def _run_once() -> None:
                     )
 
     for row_idx, row in rows:
-        status = _get(row, header_idx.get("status", -1))
-        action = _get(row, header_idx.get("action", -1))
-        to_channel = _get(row, header_idx.get("to_channel", -1))
-        from_channel = _get(row, header_idx.get("from_channel", -1))
-        sku_name = _get(row, header_idx.get("sku_name", -1))
+        status = _norm_str(_get(row, header_idx.get("status", -1)))
+        action = _norm_str(_get(row, header_idx.get("action", -1)))
+        to_channel = _norm_str(_get(row, header_idx.get("to_channel", -1)))
+        from_channel = _norm_str(_get(row, header_idx.get("from_channel", -1)))
+        sku_name = _norm_str(_get(row, header_idx.get("sku_name", -1)))
         qty_raw = _get(row, header_idx.get("quantity", -1))
-        date_str = _get(row, header_idx.get("date", -1))
-        external_id = _get(row, header_idx.get("external_id", -1))
+        date_str = _norm_str(_get(row, header_idx.get("date", -1)))
+        external_id = _norm_str(_get(row, header_idx.get("external_id", -1)))
 
         if action == "CANCEL":
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
