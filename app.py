@@ -673,7 +673,7 @@ def main() -> None:
                         except Exception:
                             st.error("삭제에 실패했습니다.")
                         if deleted:
-                            st.experimental_rerun()
+                            st.rerun()
 
 
     st.divider()
