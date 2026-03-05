@@ -584,17 +584,20 @@ def main() -> None:
                 row_index_map[label] = row_idx
             target = del_col1.selectbox("삭제 대상", key_options)
             if del_col2.button("삭제"):
+                deleted = False
                 try:
                     add_ws = _connect_sheet(readonly=False).spreadsheet.worksheet("Add_inventory")
                     row_idx = row_index_map.get(target)
                     if row_idx:
                         add_ws.delete_rows(row_idx)
                         st.success("삭제되었습니다.")
-                        st.experimental_rerun()
+                        deleted = True
                     else:
                         st.error("삭제 대상 행을 찾지 못했습니다.")
                 except Exception:
                     st.error("삭제에 실패했습니다.")
+                if deleted:
+                    st.experimental_rerun()
 
         st.divider()
         st.subheader("품고 입고요청 취소")
