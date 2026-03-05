@@ -394,7 +394,17 @@ def create_inbound_request(
                 sheet_id = None
             if not sheet_id:
                 # fallback: click add button
-                add_btn = _find_in_frames(detail_popup, ["span:has-text('상품추가')", "text=상품추가", "a:has-text('상품추가')"])
+                add_btn = _find_in_frames(
+                    detail_popup,
+                    [
+                        "span:has-text('상품추가')",
+                        "button:has-text('상품추가')",
+                        "a:has-text('상품추가')",
+                        "input[type='button'][value*='상품추가']",
+                        "input[type='submit'][value*='상품추가']",
+                        "text=상품추가",
+                    ],
+                )
                 if not add_btn:
                     raise RuntimeError("상품추가 버튼을 찾지 못했습니다.")
                 product_popup = _open_popup_or_same(detail_popup, add_btn, context, wait_url_contains="template=IM13")
