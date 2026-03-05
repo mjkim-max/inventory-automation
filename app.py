@@ -655,7 +655,12 @@ def main() -> None:
         if intake_groups:
             st.caption("날짜 / 출고 / 입고 기준으로 그룹화되어 있습니다.")
             for (date_val, from_ch, to_ch, created_val), rows in intake_groups:
-                time_label = f" {created_val}" if created_val else ""
+                time_only = ""
+                if created_val:
+                    # created_at format: YYYY-MM-DD HH:MM:SS
+                    parts = created_val.split(" ")
+                    time_only = parts[1] if len(parts) > 1 else created_val
+                time_label = f" {time_only}" if time_only else ""
                 header_label = f"{date_val}{time_label}  {from_ch} → {to_ch}"
                 with st.expander(header_label, expanded=False):
                     # Build rows with status
