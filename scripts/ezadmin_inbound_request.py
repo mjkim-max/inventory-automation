@@ -343,10 +343,25 @@ def create_inbound_request(
             create_popup.wait_for_timeout(800)
 
             # Search created sheet by name to ensure it is visible
-            search_select = _find_in_frames(page, ["select[name*='search']", "select#search_kind", "select[name*='key']"])
+            search_select = _find_in_frames(
+                page,
+                [
+                    "select[name*='search']",
+                    "select#search_kind",
+                    "select[name*='key']",
+                ],
+            )
             if search_select:
                 _select_option_contains(search_select.first, "전표명")
-            search_input = _find_in_frames(page, ["input[name*='search']", "input#search_word", "input[name*='keyword']"])
+            search_input = _find_in_frames(
+                page,
+                [
+                    "input#search_word",
+                    "input[name*='keyword']",
+                    "input[name*='search']:not([type='hidden'])",
+                    "input[type='text'][name*='search']",
+                ],
+            )
             if search_input:
                 search_input.first.fill(sheet_name)
             search_btn = _find_in_frames(page, ["div#search", "div.table_search_button", "button:has-text('검색')", "text=검색"])
