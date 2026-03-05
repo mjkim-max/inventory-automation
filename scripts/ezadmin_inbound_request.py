@@ -105,7 +105,8 @@ def _debug_dump(page, label: str) -> None:
         pass
 
 
-def _open_popup_or_same(page, click_locator, wait_url_contains: Optional[str] = None):
+def _open_popup_or_same(page, click_locator, context, wait_url_contains: Optional[str] = None, timeout_ms: int = 15000):
+    before_pages = set(context.pages)
     try:
         with page.expect_popup(timeout=5000) as popup_info:
             click_locator.first.click()
@@ -114,6 +115,19 @@ def _open_popup_or_same(page, click_locator, wait_url_contains: Optional[str] = 
         return popup
     except PlaywrightTimeoutError:
         click_locator.first.click()
+        # Fallback: wait for new page in context
+        elapsed = 0
+        while elapsed < timeout_ms:
+            for p in context.pages:
+                if p not in before_pages:
+                    try:
+                        if wait_url_contains:
+                            p.wait_for_url(f"**{wait_url_contains}**", timeout=5000)
+                    except Exception:
+                        pass
+                    return p
+            page.wait_for_timeout(250)
+            elapsed += 250
         if wait_url_contains:
             try:
                 page.wait_for_url(f"**{wait_url_contains}**", timeout=5000)
@@ -270,6 +284,7 @@ def create_inbound_request(
         else:
             browser = p.chromium.launch(headless=headless, args=launch_args, env=launch_env)
         page = browser.new_page()
+        context = page.context
         try:
             _login_ezadmin(page, domain=domain, username=username, password=password, login_url=login_url)
 
@@ -280,7 +295,9 @@ def create_inbound_request(
             new_btn = _find_in_frames(page, ["#new_sheet", "button#new_sheet", "button:has-text('전표생성')", "text=전표생성"])
             if not new_btn:
                 raise RuntimeError("전표생성 버튼을 찾지 못했습니다.")
-            create_popup = _open_popup_or_same(page, new_btn)
+            create_popup = _open_popup_or_same(page, new_btn, context, wait_url_contains="template=IM16")
+            if create_popup is page:
+                raise RuntimeError("전표생성 팝업이 열리지 않았습니다.")
             create_popup.wait_for_timeout(800)
 
             # Supplier select
@@ -316,14 +333,14 @@ def create_inbound_request(
             sheet_link = _find_in_frames(page, [f"a:has-text('{display_name}')", f"a:has-text('{sheet_name}')"])
             if not sheet_link:
                 raise RuntimeError("생성된 전표 링크를 찾지 못했습니다.")
-            detail_popup = _open_popup_or_same(page, sheet_link, wait_url_contains="template=IM10")
+            detail_popup = _open_popup_or_same(page, sheet_link, context, wait_url_contains="template=IM10")
             detail_popup.wait_for_timeout(800)
 
             # Open product add popup
             add_btn = _find_in_frames(detail_popup, ["span:has-text('상품추가')", "text=상품추가", "a:has-text('상품추가')"])
             if not add_btn:
                 raise RuntimeError("상품추가 버튼을 찾지 못했습니다.")
-            product_popup = _open_popup_or_same(detail_popup, add_btn, wait_url_contains="template=IM13")
+            product_popup = _open_popup_or_same(detail_popup, add_btn, context, wait_url_contains="template=IM13")
             product_popup.wait_for_timeout(800)
 
             # Search
