@@ -561,17 +561,17 @@ def main() -> None:
         if avg_sum > 0 and stock_sum > 0:
             days_left = int(stock_sum / avg_sum)
             days_text = str(days_left)
-            growth_label = "적용"
             cover_demand = avg_sum * cover_days
             safety_stock = cover_demand * safety_factor
             recommend = int(round(cover_demand + safety_stock - stock_sum))
             if recommend < 0:
                 recommend = 0
             recommend_text = str(recommend)
+            growth_recommend_text = str(recommend)
         else:
-            growth_label = "-"
             days_text = "-"
             recommend_text = "-"
+            growth_recommend_text = "-"
         total_rows.append(
             {
                 "품목명": label,
@@ -579,7 +579,7 @@ def main() -> None:
                 "일평균 출고량": avg_val,
                 "출고 가능": days_text,
                 "발주 추천수량": recommend_text,
-                "성장률 반영(3개월)": growth_label,
+                "성장률 반영(3개월)": growth_recommend_text,
             }
         )
     st.dataframe(total_rows, use_container_width=True, hide_index=True)
