@@ -249,49 +249,12 @@ def _login_ezadmin(page, *, domain: str, username: str, password: str, login_url
 
 
 def _build_sheet_name(date_str: str, from_channel: str) -> str:
-    ymd = date_str.replace("-", "")
-    return f"{ymd}_{from_channel}_품고_신규"
-
-
-def _collect_sheet_names(page) -> List[str]:
-    tables = page.locator("table")
-    for i in range(tables.count()):
-        t = tables.nth(i)
-        headers = [h.strip() for h in t.locator("th").all_text_contents()]
-        if "전표명" in headers:
-            name_idx = headers.index("전표명")
-            rows = t.locator("tbody tr")
-            names = []
-            for r in range(rows.count()):
-                cells = rows.nth(r).locator("td")
-                if cells.count() > name_idx:
-                    txt = cells.nth(name_idx).inner_text().strip()
-                    if txt:
-                        names.append(txt)
-            return names
-    return []
-
-
-def _next_sheet_name(
-    base_name: str, supplier_name: str, existing_names: List[str], page_text: str = ""
-) -> str:
-    max_suffix = 0
-    for name in existing_names:
-        name = name.strip()
-        m = re.search(rf"{re.escape(base_name)}_(\\d+)", name)
-        if m:
-            suffix = int(m.group(1))
-            if suffix > max_suffix:
-                max_suffix = suffix
-    if max_suffix == 0 and page_text:
-        for m in re.findall(rf"{re.escape(base_name)}_(\\d+)", page_text):
-            try:
-                suffix = int(m)
-                if suffix > max_suffix:
-                    max_suffix = suffix
-            except Exception:
-                continue
-    return f"{base_name}_{max_suffix + 1}"
+    # Use minute-level timestamp to avoid collisions
+    try:
+        ts = datetime.now().strftime("%Y%m%d%H%M")
+    except Exception:
+        ts = date_str.replace("-", "")
+    return f"{ts}_{from_channel}_품고_신규"
 
 
 def _normalize_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -363,7 +326,7 @@ def create_outbound_request(
             page.goto(outbound_url, wait_until="domcontentloaded")
             page.wait_for_timeout(1200)
 
-            # Pre-search by base name to gather existing sheets for suffixing
+            # Pre-search by base name (for visibility only; naming is timestamp-based)
             search_select = _find_in_frames(
                 page,
                 [
@@ -390,15 +353,8 @@ def create_outbound_request(
                 search_btn.first.click()
                 page.wait_for_timeout(1200)
 
-            # Compute next sheet name based on existing list (avoid duplicates)
-            existing_names = _collect_sheet_names(page)
-            try:
-                page_text = page.content()
-            except Exception:
-                page_text = ""
-            sheet_name = sheet_name_override or _next_sheet_name(
-                base_name, supplier_name, existing_names, page_text=page_text
-            )
+            # Timestamp-based name (no suffixing)
+            sheet_name = sheet_name_override or base_name
             display_name = f"{sheet_name}_{supplier_name}"
 
             # Create sheet (open popup URL directly to avoid popup blocking)
