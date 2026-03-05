@@ -549,18 +549,17 @@ def main() -> None:
             intake_values = add_ws.get_all_values()
             if intake_values and len(intake_values) > 1:
                 header = intake_values[0]
-                rows = intake_values[1:]
-                rows = list(reversed(rows))[:10]
-                filtered = []
-                for r in rows:
+                data_rows = []
+                for i, r in enumerate(intake_values[1:], start=2):
                     if not r:
                         continue
                     if r == header:
                         continue
                     if len(r) >= 1 and str(r[0]).strip().lower() == "date":
                         continue
-                    filtered.append(r)
-                intake_rows = [dict(zip(header, r)) for r in filtered]
+                    data_rows.append((i, r))
+                recent = list(reversed(data_rows))[:10]
+                intake_rows = [dict(zip(header, r)) for _, r in recent]
                 st.dataframe(intake_rows, use_container_width=True, hide_index=True)
             else:
                 st.info("입고내역이 없습니다.")
@@ -570,29 +569,29 @@ def main() -> None:
         if intake_rows:
             st.caption("삭제할 항목을 선택하세요.")
             del_col1, del_col2 = st.columns(2)
-            key_options = [
-                f"{r.get('date','')} | {r.get('from_channel','')} | {r.get('channel','')} | {r.get('sku_name','')} | {r.get('quantity','')}"
-                for r in intake_rows
-            ]
-            target = del_col1.selectbox("삭제 대상", key_options)
+            # Map displayed rows to their sheet row index for reliable deletion
+            header = intake_values[0]
+            header_lower = {h.lower(): h for h in header}
+            def _val(r, key):
+                k = header_lower.get(key, key)
+                return r.get(k, "")
+            key_options = []
+            row_index_map = {}
+            for row_idx, r in recent:
+                label = f\"{_val(r, 'date')} | {_val(r, 'from_channel')} | {_val(r, 'channel')} | {_val(r, 'sku_name')} | {_val(r, 'quantity')}\"
+                key_options.append(label)
+                row_index_map[label] = row_idx
+            target = del_col1.selectbox(\"삭제 대상\", key_options)
             if del_col2.button("삭제"):
                 try:
                     add_ws = _connect_sheet(readonly=False).spreadsheet.worksheet("Add_inventory")
-                    all_values = add_ws.get_all_values()
-                    # Find matching row
-                    for idx, row in enumerate(all_values[1:], start=2):
-                        key = (
-                            f"{row[0] if len(row)>0 else ''} | "
-                            f"{row[1] if len(row)>1 else ''} | "
-                            f"{row[2] if len(row)>2 else ''} | "
-                            f"{row[3] if len(row)>3 else ''} | "
-                            f"{row[4] if len(row)>4 else ''}"
-                        )
-                        if key == target:
-                            add_ws.delete_rows(idx)
-                            st.success("삭제되었습니다.")
-                            st.experimental_rerun()
-                            break
+                    row_idx = row_index_map.get(target)
+                    if row_idx:
+                        add_ws.delete_rows(row_idx)
+                        st.success("삭제되었습니다.")
+                        st.experimental_rerun()
+                    else:
+                        st.error("삭제 대상 행을 찾지 못했습니다.")
                 except Exception:
                     st.error("삭제에 실패했습니다.")
 
