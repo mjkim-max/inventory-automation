@@ -324,6 +324,7 @@ def _run_once() -> None:
     if ez_out_enabled is None:
         ez_out_enabled = "1" if ez_enabled else "0"
     ez_out_enabled = ez_out_enabled == "1"
+    ez_out_bypass = os.getenv("EZADMIN_OUTBOUND_BYPASS", "0") == "1"
     if not ez_enabled:
         print("[INFO] EZADMIN_INBOUND_ENABLE != 1; skipping ezadmin inbound.")
     elif create_inbound_request is None:
@@ -502,7 +503,7 @@ def _run_once() -> None:
             continue
 
         # For ezadmin -> poomgo, only proceed after ezadmin outbound is done
-        if from_channel == "이지어드민" and status != "EZADMIN_DONE":
+        if from_channel == "이지어드민" and status != "EZADMIN_DONE" and not ez_out_bypass:
             continue
         if external_id:
             # Already created in Poomgo
