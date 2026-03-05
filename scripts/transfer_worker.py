@@ -246,6 +246,16 @@ def _poomgo_cancel_receiving(*, token: str, receiving_id: str) -> None:
 
 
 def main() -> None:
+    # Preflight DNS check (helps flaky resolver on this host)
+    for i in range(1, 4):
+        try:
+            ip = socket.gethostbyname("oauth2.googleapis.com")
+            print(f"[INFO] DNS preflight ok: {ip}")
+            break
+        except Exception as e:
+            print(f"[WARN] DNS preflight failed ({i}/3): {e}")
+            time.sleep(1)
+
     cfg = _load_secrets()
     ws = _connect_sheet(cfg)
     _ensure_transfer_queue_header(ws)
