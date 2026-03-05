@@ -223,9 +223,14 @@ def main() -> None:
     poomgo_cfg = cfg.get("poomgo", {})
     poomgo_token = poomgo_cfg.get("token") or os.getenv("POOMGO_TOKEN", "")
     recv_cfg = poomgo_cfg.get("receiving", {})
-    destination_warehouse = str(
+    destination_warehouse_raw = str(
         recv_cfg.get("destination_warehouse") or os.getenv("POOMGO_DESTINATION_WAREHOUSE", "")
     ).strip()
+    allow_null_warehouse = (
+        destination_warehouse_raw.lower() in {"null", "none"}
+        or os.getenv("POOMGO_ALLOW_NULL_WAREHOUSE", "0") == "1"
+    )
+    destination_warehouse = None if destination_warehouse_raw.lower() in {"null", "none", ""} else destination_warehouse_raw
     schedule_form_code_key = str(
         recv_cfg.get("schedule_form_code_key") or os.getenv("POOMGO_SCHEDULE_FORM_CODE_KEY", "")
     ).strip()
@@ -299,7 +304,7 @@ def main() -> None:
         missing = []
         if not poomgo_token:
             missing.append("poomgo.token")
-        if not destination_warehouse:
+        if not destination_warehouse and not allow_null_warehouse:
             missing.append("destination_warehouse")
         if not schedule_form_code_key:
             missing.append("schedule_form_code_key")
