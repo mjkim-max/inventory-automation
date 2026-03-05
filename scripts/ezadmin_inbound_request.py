@@ -442,6 +442,7 @@ def create_inbound_request(
                     ],
                 )
                 if not add_btn:
+                    _debug_dump(detail_popup, "detail_no_addbtn")
                     raise RuntimeError("상품추가 버튼을 찾지 못했습니다.")
                 product_popup = _open_popup_or_same(detail_popup, add_btn, context, wait_url_contains="template=IM13")
             else:
