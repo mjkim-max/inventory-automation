@@ -272,15 +272,25 @@ def _collect_sheet_names(page) -> List[str]:
     return []
 
 
-def _next_sheet_name(base_name: str, supplier_name: str, existing_names: List[str]) -> str:
+def _next_sheet_name(
+    base_name: str, supplier_name: str, existing_names: List[str], page_text: str = ""
+) -> str:
     max_suffix = 0
     for name in existing_names:
         name = name.strip()
-        m = re.search(rf"^{re.escape(base_name)}_(\\d+)", name)
+        m = re.search(rf"{re.escape(base_name)}_(\\d+)", name)
         if m:
             suffix = int(m.group(1))
             if suffix > max_suffix:
                 max_suffix = suffix
+    if max_suffix == 0 and page_text:
+        for m in re.findall(rf"{re.escape(base_name)}_(\\d+)", page_text):
+            try:
+                suffix = int(m)
+                if suffix > max_suffix:
+                    max_suffix = suffix
+            except Exception:
+                continue
     return f"{base_name}_{max_suffix + 1}"
 
 
@@ -381,7 +391,11 @@ def create_outbound_request(
 
             # Compute next sheet name based on existing list (avoid duplicates)
             existing_names = _collect_sheet_names(page)
-            sheet_name = _next_sheet_name(base_name, supplier_name, existing_names)
+            try:
+                page_text = page.content()
+            except Exception:
+                page_text = ""
+            sheet_name = _next_sheet_name(base_name, supplier_name, existing_names, page_text=page_text)
             display_name = f"{sheet_name}_{supplier_name}"
 
             # Create sheet (open popup URL directly to avoid popup blocking)
