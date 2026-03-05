@@ -203,12 +203,13 @@ def _build_header_index(header: List[str]) -> Dict[str, int]:
 
 def _update_row(ws, row_idx: int, header_idx: Dict[str, int], *,
                status: str, message: str, updated_at: str,
-               action: str = "", external_id: str = "") -> None:
+               action: str = "", external_id: str = "", sheet_name: str = "") -> None:
     status_col = header_idx.get("status", -1) + 1
     message_col = header_idx.get("message", -1) + 1
     updated_col = header_idx.get("updated_at", -1) + 1
     action_col = header_idx.get("action", -1) + 1
     external_col = header_idx.get("external_id", -1) + 1
+    sheet_col = header_idx.get("sheet_name", -1) + 1
     # Update minimal cells to avoid overwriting created_at
     if status_col > 0:
         ws.update_cell(row_idx, status_col, status)
@@ -220,6 +221,8 @@ def _update_row(ws, row_idx: int, header_idx: Dict[str, int], *,
         ws.update_cell(row_idx, action_col, action)
     if external_col > 0 and external_id:
         ws.update_cell(row_idx, external_col, external_id)
+    if sheet_col > 0 and sheet_name:
+        ws.update_cell(row_idx, sheet_col, sheet_name)
 
 
 def _poomgo_headers(token: str) -> Dict[str, str]:
