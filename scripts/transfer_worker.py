@@ -63,7 +63,7 @@ def _next_outbound_sheet_name(base_name: str, header_idx: Dict[str, int], rows: 
                     max_suffix = max(max_suffix, int(m.group(1)))
                 except Exception:
                     continue
-    return f\"{base_name}_{max_suffix + 1}\"
+    return f"{base_name}_{max_suffix + 1}"
 
 SKU_NAME_TO_BARCODE = {
     "플라우드 노트 Pro / 블랙": "199284926073",
