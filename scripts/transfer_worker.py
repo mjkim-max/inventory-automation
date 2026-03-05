@@ -181,6 +181,15 @@ def _ensure_transfer_queue_header(ws) -> None:
     if first[: len(header)] != header:
         ws.update("A1", [header])
 
+    # Clean duplicate header rows that may have been inserted previously
+    values = ws.get_all_values()
+    delete_rows = []
+    for i, row in enumerate(values[1:10], start=2):
+        if row[: len(header)] == header:
+            delete_rows.append(i)
+    for i in reversed(delete_rows):
+        ws.delete_rows(i)
+
 
 def _col_letter(idx: int) -> str:
     # 1-based index
