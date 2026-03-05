@@ -80,6 +80,16 @@ POOMGO_NAME_MAP = {
     "플라우드 노트핀S / 실버": "00363",
 }
 
+# Barcode -> internal SKU mapping (more stable than names)
+POOMGO_CODE_MAP = {
+    "199284926073": "00355",
+    "199284928237": "00356",
+    "6977512610000": "00358",
+    "6977512610024": "00359",
+    "0199284031340": "00362",
+    "0199284909670": "00363",
+}
+
 # Coupang columns (쿠팡)
 COUPANG_COLUMN_MAP = {
     "00355": "D",  # 노트프로 블랙
@@ -523,7 +533,27 @@ def _find_or_create_date_row(ws, date_str: str, target_cols: List[str], *, overw
     return new_row_idx
 
 
-def fetch_poomgo_stock(*, token: str) -> Dict[str, int]:
+def _get_nested_field(item: Dict[str, Any], path: str) -> Any:
+    cur: Any = item
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def _parse_qty(value: Any) -> Optional[int]:
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(float(value))
+        except Exception:
+            return None
+    return None
+
+
+def _fetch_poomgo_items(*, token: str) -> List[Dict[str, Any]]:
     if requests is None:
         raise RuntimeError("requests is not installed.")
     url = "https://api.poomgo.com/open-api/wms/resources/quantity-at"
@@ -544,27 +574,87 @@ def fetch_poomgo_stock(*, token: str) -> Dict[str, int]:
     )
     if isinstance(items, dict):
         items = items.get("collection") or items.get("items") or []
+    if not isinstance(items, list):
+        return []
+    return items
+
+
+def _poomgo_items_to_stock(
+    items: List[Dict[str, Any]],
+    *,
+    quantity_field: str = "",
+    container_type_allowlist: Optional[List[str]] = None,
+    pathname_allowlist: Optional[List[str]] = None,
+) -> Dict[str, int]:
+    allowlist = {c.strip() for c in (container_type_allowlist or []) if c.strip()}
+    path_allow = [p.strip() for p in (pathname_allowlist or []) if p.strip()]
     result: Dict[str, int] = {}
+    fallback_fields = [
+        "available_quantity",
+        "availableQuantity",
+        "available_stock",
+        "availableStock",
+        "orderable_quantity",
+        "orderableQuantity",
+        "total_quantity",
+        "totalQuantity",
+        "quantity",
+        "result_quantity",
+    ]
     for item in items:
         name = str(item.get("name", "")).strip()
-        qty = item.get("result_quantity")
-        if name in POOMGO_NAME_MAP and isinstance(qty, (int, float, str)):
-            sku = POOMGO_NAME_MAP[name]
-            try:
-                result[sku] = int(float(qty))
-            except Exception:
+        if allowlist:
+            ct = str(item.get("container_type_code_key", "")).strip()
+            if ct not in allowlist:
                 continue
-    if not result:
+        if path_allow:
+            pathname = str(item.get("pathname", "")).strip()
+            if not any(p in pathname for p in path_allow):
+                continue
+        qty_val = None
+        if quantity_field:
+            qty_val = _get_nested_field(item, quantity_field)
+        if qty_val is None:
+            for key in fallback_fields:
+                if key in item:
+                    qty_val = item.get(key)
+                    break
+        qty = _parse_qty(qty_val)
+        sku = None
+        code = str(item.get("code", "")).strip()
+        if code in POOMGO_CODE_MAP:
+            sku = POOMGO_CODE_MAP[code]
+        elif name in POOMGO_NAME_MAP:
+            sku = POOMGO_NAME_MAP[name]
+        if sku and qty is not None:
+            result[sku] = result.get(sku, 0) + qty
+    return result
+
+
+def fetch_poomgo_stock(
+    *,
+    token: str,
+    quantity_field: str = "",
+    container_type_allowlist: Optional[List[str]] = None,
+    pathname_allowlist: Optional[List[str]] = None,
+) -> Dict[str, int]:
+    items = _fetch_poomgo_items(token=token)
+    if not items:
         debug_dir = Path(__file__).resolve().parents[1] / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
         try:
             (debug_dir / "poomgo_response.json").write_text(
-                json.dumps(data, ensure_ascii=False, indent=2),
+                json.dumps({"rows": items}, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
         except Exception:
             pass
-    return result
+    return _poomgo_items_to_stock(
+        items,
+        quantity_field=quantity_field,
+        container_type_allowlist=container_type_allowlist,
+        pathname_allowlist=pathname_allowlist,
+    )
 
 
 def _coupang_auth(access_key: str, secret_key: str, method: str, path: str, query: str) -> str:
@@ -695,13 +785,77 @@ def main() -> None:
 
     # Fetch Poomgo and map to columns
     poomgo_token = _get_cfg_value(cfg, "poomgo", "token", env="POOMGO_TOKEN")
+    poomgo_qty_field = _get_cfg_value(
+        cfg,
+        "poomgo",
+        "quantity_field",
+        env="POOMGO_QTY_FIELD",
+        default="",
+    )
+    poomgo_ct_allow = _get_cfg_value(
+        cfg,
+        "poomgo",
+        "container_type_allowlist",
+        env="POOMGO_CONTAINER_TYPE_ALLOWLIST",
+        default="",
+    )
+    poomgo_path_allow = _get_cfg_value(
+        cfg,
+        "poomgo",
+        "pathname_allowlist",
+        env="POOMGO_PATHNAME_ALLOWLIST",
+        default="",
+    )
+    poomgo_ct_allowlist = [c.strip() for c in poomgo_ct_allow.split(",") if c.strip()]
+    poomgo_path_allowlist = [p.strip() for p in poomgo_path_allow.split(",") if p.strip()]
     if poomgo_token:
-        poomgo = fetch_poomgo_stock(token=poomgo_token)
+        poomgo_items = _fetch_poomgo_items(token=poomgo_token)
+        poomgo = _poomgo_items_to_stock(
+            poomgo_items,
+            quantity_field=poomgo_qty_field,
+            container_type_allowlist=poomgo_ct_allowlist,
+            pathname_allowlist=poomgo_path_allowlist,
+        )
         for sku, qty in poomgo.items():
             col = POOMGO_COLUMN_MAP.get(sku)
             if not col:
                 continue
             updates.append({"range": f"{col}{row_idx}", "values": [[qty]]})
+
+        # Debug sheet: compare total vs picking-only for quick validation
+        try:
+            poomgo_all = _poomgo_items_to_stock(
+                poomgo_items,
+                quantity_field=poomgo_qty_field,
+                container_type_allowlist=poomgo_ct_allowlist,
+                pathname_allowlist=[],
+            )
+            poomgo_picking = _poomgo_items_to_stock(
+                poomgo_items,
+                quantity_field=poomgo_qty_field,
+                container_type_allowlist=poomgo_ct_allowlist,
+                pathname_allowlist=["피킹 공간"],
+            )
+            debug_ws = ws.spreadsheet.worksheet("Poomgo_debug")
+        except Exception:
+            try:
+                debug_ws = ws.spreadsheet.add_worksheet(title="Poomgo_debug", rows=2000, cols=10)
+                debug_ws.append_row(["date", "sku", "poomgo_picking", "poomgo_all"])
+            except Exception:
+                debug_ws = None
+        if debug_ws is not None:
+            debug_rows = []
+            for sku in sorted(POOMGO_COLUMN_MAP.keys()):
+                debug_rows.append(
+                    [
+                        today,
+                        sku,
+                        poomgo_picking.get(sku, 0),
+                        poomgo_all.get(sku, 0),
+                    ]
+                )
+            if debug_rows:
+                debug_ws.append_rows(debug_rows, value_input_option="USER_ENTERED")
 
     # Fetch Coupang and map to columns
     coupang_access = _get_cfg_value(cfg, "coupang", "access_key", env="COUPANG_ACCESS_KEY")

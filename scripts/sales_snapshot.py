@@ -19,6 +19,15 @@ except Exception:  # pragma: no cover
 import requests
 
 try:
+    import gspread
+except Exception:  # pragma: no cover
+    gspread = None  # type: ignore[assignment]
+try:
+    from google.oauth2.service_account import Credentials
+except Exception:  # pragma: no cover
+    Credentials = None  # type: ignore[assignment]
+
+try:
     from zoneinfo import ZoneInfo
 except Exception:  # pragma: no cover
     ZoneInfo = None  # type: ignore[assignment]
@@ -67,6 +76,58 @@ def _get_cfg_value(cfg: Dict[str, Any], *keys: str, env: Optional[str] = None, d
         if val:
             return val
     return default
+
+
+def _connect_sheet(cfg: Dict[str, Any], *, readonly: bool = False):
+    if gspread is None or Credentials is None:
+        raise RuntimeError("gspread/google-auth not installed.")
+    gs_cfg = cfg.get("google_sheets", {})
+    sa = cfg.get("google_sheets_service_account", {})
+    if not gs_cfg or not sa:
+        raise RuntimeError("google_sheets or google_sheets_service_account missing in secrets.")
+    sheet_id = gs_cfg.get("sheet_id") or gs_cfg.get("spreadsheet_id")
+    worksheet = gs_cfg.get("sales_worksheet", "sales_snapshot")
+    if not sheet_id:
+        raise RuntimeError("google_sheets.sheet_id is required.")
+    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    if not readonly:
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_info(dict(sa), scopes=scopes)
+    client = gspread.authorize(creds)
+    ss = client.open_by_key(sheet_id)
+    try:
+        return ss.worksheet(worksheet)
+    except Exception:
+        if readonly:
+            raise
+        ws = ss.add_worksheet(title=worksheet, rows=2000, cols=10)
+        _ensure_sales_header(ws)
+        return ws
+
+
+def _ensure_sales_header(ws) -> None:
+    header = ["date", "fetched_at", "payload_json"]
+    values = ws.get_all_values()
+    if not values:
+        ws.append_row(header)
+        return
+    if values[0] != header:
+        ws.insert_row(header, index=1)
+
+
+def _upsert_sales_row(ws, *, date_str: str, fetched_at: str, payload_json: str) -> None:
+    values = ws.get_all_values()
+    if not values:
+        _ensure_sales_header(ws)
+        values = ws.get_all_values()
+    # Find existing row for date (skip header)
+    for i, row in enumerate(values[1:], start=2):
+        if not row:
+            continue
+        if row[0].strip() == date_str:
+            ws.update(f"A{i}:C{i}", [[date_str, fetched_at, payload_json]])
+            return
+    ws.append_row([date_str, fetched_at, payload_json], value_input_option="USER_ENTERED")
 
 
 def _today_range_kst() -> tuple[str, str]:
@@ -500,6 +561,20 @@ def main() -> None:
             print(f"[WARN] 스마트스토어 매출 조회 실패: {e}")
     else:
         print("[WARN] 스마트스토어 인증정보 없음 (smartstore.client_id / client_secret)")
+    try:
+        if ZoneInfo:
+            now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+        else:
+            now_kst = datetime.now()
+        fetched_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+        ws = _connect_sheet(cfg, readonly=False)
+        _ensure_sales_header(ws)
+        payload_json = json.dumps(payload, ensure_ascii=False)
+        date_str = fetched_at.split(" ")[0]
+        _upsert_sales_row(ws, date_str=date_str, fetched_at=fetched_at, payload_json=payload_json)
+        print(f"[INFO] Sales snapshot saved: {fetched_at}")
+    except Exception as e:
+        print(f"[WARN] Sales snapshot sheet update failed: {e}")
     print(json.dumps(payload, ensure_ascii=False))
 
 

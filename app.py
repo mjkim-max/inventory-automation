@@ -7,9 +7,6 @@ import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 import json
-import subprocess
-import sys
-from pathlib import Path
 
 
 SHEET_COLUMNS = {
@@ -56,6 +53,73 @@ def _connect_sheet(readonly: bool = True):
     client = gspread.authorize(creds)
     ss = client.open_by_key(sheet_id)
     return ss.worksheet(worksheet)
+
+
+def _connect_sales_sheet(readonly: bool = True):
+    cfg = st.secrets.get("google_sheets", {})
+    sa = st.secrets.get("google_sheets_service_account", {})
+    if not cfg or not sa:
+        raise RuntimeError("google_sheets / google_sheets_service_account missing in secrets.")
+    sheet_id = cfg.get("sheet_id") or cfg.get("spreadsheet_id")
+    worksheet = cfg.get("sales_worksheet", "sales_snapshot")
+    if not sheet_id:
+        raise RuntimeError("google_sheets.sheet_id missing.")
+    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    if not readonly:
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_info(dict(sa), scopes=scopes)
+    client = gspread.authorize(creds)
+    ss = client.open_by_key(sheet_id)
+    return ss.worksheet(worksheet)
+
+
+def _get_latest_sales_snapshot():
+    ws = _connect_sales_sheet(readonly=True)
+    values = ws.get_all_values()
+    if len(values) < 2:
+        return {}
+    latest_row = None
+    latest_dt = None
+    for i, row in enumerate(values):
+        if i == 0:
+            continue
+        if len(row) < 3:
+            continue
+        raw_ts = row[1].strip()
+        if not raw_ts:
+            continue
+        try:
+            dt = datetime.strptime(raw_ts, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            continue
+        if latest_dt is None or dt > latest_dt:
+            latest_dt = dt
+            latest_row = row
+    if not latest_row:
+        return {}
+    payload_json = latest_row[2].strip() if len(latest_row) > 2 else ""
+    payload = {}
+    if payload_json:
+        try:
+            payload = json.loads(payload_json)
+        except Exception:
+            payload = {}
+    try:
+        from zoneinfo import ZoneInfo
+        now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+    except Exception:
+        now_kst = datetime.now()
+    return {
+        "fetched_at": latest_row[1].strip(),
+        "date": payload.get("date", "-"),
+        "cafe24_sales_qty": payload.get("cafe24_sales_qty", "-"),
+        "coupang_sales_qty": payload.get("coupang_sales_qty", "-"),
+        "smartstore_sales_qty": payload.get("smartstore_sales_qty", "-"),
+        "cafe24_items": payload.get("cafe24_items", {}),
+        "coupang_items": payload.get("coupang_items", {}),
+        "smartstore_items": payload.get("smartstore_items", {}),
+        "view_time": now_kst.strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 
 def _ensure_add_inventory_header(ws) -> None:
@@ -430,63 +494,20 @@ def main() -> None:
     st.divider()
     st.subheader("판매수량")
     if "sales_snapshot" not in st.session_state:
-        st.session_state["sales_snapshot"] = {}
+        try:
+            st.session_state["sales_snapshot"] = _get_latest_sales_snapshot()
+        except Exception:
+            st.session_state["sales_snapshot"] = {}
 
     _, col_s2 = st.columns([1, 1])
     with col_s2:
-        if st.button("판매수량 최신화하기"):
-            with st.spinner("판매수량 최신화 중..."):
+        if st.button("판매수량 새로고침"):
+            with st.spinner("시트에서 판매수량 로딩 중..."):
                 try:
-                    script_path = Path(__file__).resolve().parent / "scripts" / "sales_snapshot.py"
-                    venv_py = Path(__file__).resolve().parent / ".venv" / "bin" / "python"
-                    py = str(venv_py) if venv_py.exists() else sys.executable
-                    result = subprocess.run(
-                        [py, str(script_path)],
-                        check=True,
-                        timeout=300,
-                        capture_output=True,
-                        text=True,
-                    )
-                    try:
-                        out = result.stdout.strip()
-                        warn_lines = [ln for ln in out.splitlines() if ln.strip().startswith("[WARN]")]
-                        for wl in warn_lines:
-                            st.warning(wl)
-                        # Use last JSON line in stdout (ignore WARN lines)
-                        json_line = ""
-                        for line in out.splitlines()[::-1]:
-                            if line.strip().startswith("{") and line.strip().endswith("}"):
-                                json_line = line.strip()
-                                break
-                        if not json_line:
-                            json_line = out
-                        payload = json.loads(json_line)
-                        try:
-                            from zoneinfo import ZoneInfo
-                            now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
-                        except Exception:
-                            now_kst = datetime.now()
-                        st.session_state["sales_snapshot"] = {
-                            "fetched_at": now_kst.strftime("%Y-%m-%d %H:%M:%S"),
-                            "date": payload.get("date", "-"),
-                            "cafe24_sales_qty": payload.get("cafe24_sales_qty", "-"),
-                            "coupang_sales_qty": payload.get("coupang_sales_qty", "-"),
-                            "smartstore_sales_qty": payload.get("smartstore_sales_qty", "-"),
-                            "cafe24_items": payload.get("cafe24_items", {}),
-                            "coupang_items": payload.get("coupang_items", {}),
-                            "smartstore_items": payload.get("smartstore_items", {}),
-                        }
-                        st.success("판매수량 최신화 완료")
-                    except Exception as e:
-                        st.error(f"판매수량 파싱 실패: {e}")
-                        st.code(result.stdout.strip() or "(stdout empty)")
+                    st.session_state["sales_snapshot"] = _get_latest_sales_snapshot()
+                    st.success("판매수량 로딩 완료")
                 except Exception as e:
-                    st.error(f"판매수량 최신화 실패: {e}")
-                    if isinstance(e, subprocess.CalledProcessError):
-                        if e.stdout:
-                            st.code(e.stdout.strip())
-                        if e.stderr:
-                            st.code(e.stderr.strip())
+                    st.error(f"판매수량 로딩 실패: {e}")
 
     snap = st.session_state.get("sales_snapshot", {})
     snap_date = snap.get("date", "-") if isinstance(snap, dict) else "-"
@@ -502,7 +523,8 @@ def main() -> None:
             snap_date = parsed.strftime("%Y-%m-%d")
         except Exception:
             snap_date = str(snap_date).split(" ")[0]
-        sales_label = f"{snap_date} {now_kst.strftime('%H:%M')}"
+        fetched_at = snap.get("fetched_at", "")
+        sales_label = f"{snap_date} {now_kst.strftime('%H:%M')} (최근 갱신: {fetched_at})"
     else:
         sales_label = "-"
     st.subheader(f"최근 데이터: {sales_label}")
