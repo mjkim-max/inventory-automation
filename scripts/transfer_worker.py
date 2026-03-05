@@ -29,6 +29,11 @@ try:
 except Exception:  # pragma: no cover
     requests = None  # type: ignore[assignment]
 
+try:
+    from ezadmin_inbound_request import create_inbound_request
+except Exception:  # pragma: no cover
+    create_inbound_request = None  # type: ignore[assignment]
+
 SKU_NAME_TO_BARCODE = {
     "플라우드 노트 Pro / 블랙": "199284926073",
     "플라우드 노트 Pro / 실버": "199284928237",
@@ -265,6 +270,63 @@ def main() -> None:
 
     pallet_count = _to_int(pallet_count_raw)
     box_count = _to_int(box_count_raw)
+
+    # Ezadmin inbound processing (grouped by date/from/to)
+    ez_headless = os.getenv("EZADMIN_HEADLESS", "1") != "0"
+    if create_inbound_request is not None:
+        ez_groups: Dict[tuple, List[tuple]] = {}
+        for row_idx, row in rows:
+            status = _get(row, header_idx.get("status", -1))
+            action = _get(row, header_idx.get("action", -1))
+            to_channel = _get(row, header_idx.get("to_channel", -1))
+            from_channel = _get(row, header_idx.get("from_channel", -1))
+            date_str = _get(row, header_idx.get("date", -1))
+            if action == "CANCEL":
+                continue
+            if status not in {"", "PENDING"}:
+                continue
+            if to_channel != "이지어드민":
+                continue
+            key = (date_str, from_channel, to_channel)
+            ez_groups.setdefault(key, []).append((row_idx, row))
+
+        for (date_str, from_channel, _to_channel), group_rows in ez_groups.items():
+            items = []
+            for _row_idx, row in group_rows:
+                items.append(
+                    {
+                        "sku_name": _get(row, header_idx.get("sku_name", -1)),
+                        "quantity": _get(row, header_idx.get("quantity", -1)),
+                    }
+                )
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                resp = create_inbound_request(
+                    items=items,
+                    date_str=date_str or datetime.now().strftime("%Y-%m-%d"),
+                    from_channel=from_channel or "신규",
+                    headless=ez_headless,
+                )
+                msg = f"ezadmin_sheet={resp.get('display_name') or resp.get('sheet_name','')}"
+                for row_idx, _ in group_rows:
+                    _update_row(
+                        ws,
+                        row_idx,
+                        header_idx,
+                        status="SUCCESS",
+                        message=msg,
+                        updated_at=now,
+                    )
+            except Exception as e:
+                for row_idx, _ in group_rows:
+                    _update_row(
+                        ws,
+                        row_idx,
+                        header_idx,
+                        status="FAILED",
+                        message=str(e)[:200],
+                        updated_at=now,
+                    )
 
     for row_idx, row in rows:
         status = _get(row, header_idx.get("status", -1))
