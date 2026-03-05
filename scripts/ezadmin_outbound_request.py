@@ -273,17 +273,14 @@ def _collect_sheet_names(page) -> List[str]:
 
 
 def _next_sheet_name(base_name: str, supplier_name: str, existing_names: List[str]) -> str:
-    pattern = re.compile(rf"^{re.escape(base_name)}(?:_(\\d+))?_{re.escape(supplier_name)}$")
-    max_suffix = None
+    max_suffix = 0
     for name in existing_names:
-        m = pattern.match(name)
-        if not m:
-            continue
-        suffix = int(m.group(1) or 0)
-        if max_suffix is None or suffix > max_suffix:
-            max_suffix = suffix
-    if max_suffix is None:
-        return f"{base_name}_1"
+        name = name.strip()
+        m = re.search(rf"^{re.escape(base_name)}_(\\d+)", name)
+        if m:
+            suffix = int(m.group(1))
+            if suffix > max_suffix:
+                max_suffix = suffix
     return f"{base_name}_{max_suffix + 1}"
 
 
