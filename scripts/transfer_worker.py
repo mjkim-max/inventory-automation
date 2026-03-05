@@ -418,6 +418,7 @@ def _run_once() -> None:
                         status="SUCCESS",
                         message=msg,
                         updated_at=now,
+                        sheet_name=resp.get("display_name") or resp.get("sheet_name", ""),
                     )
             except Exception as e:
                 for row_idx, _ in group_rows:
