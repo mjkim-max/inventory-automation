@@ -258,37 +258,59 @@ def fetch_ezadmin_stock(
         channel = os.getenv("EZADMIN_CHROME_CHANNEL", "").strip()
         browser_pref = os.getenv("EZADMIN_BROWSER", "chromium").strip().lower()
         allow_fallback = _get_bool_env("EZADMIN_ALLOW_FALLBACK", default=True)
+        profile_dir = os.getenv("EZADMIN_PROFILE_DIR", "").strip()
+        if not profile_dir:
+            profile_dir = str((Path(__file__).resolve().parents[1] / ".playwright" / "ezadmin-profile"))
+        Path(profile_dir).mkdir(parents=True, exist_ok=True)
+
         launch_args = [
             "--disable-crash-reporter",
+            "--disable-breakpad",
             "--disable-features=Crashpad",
             "--no-crashpad",
             "--no-sandbox",
+            f"--user-data-dir={profile_dir}",
         ]
         tmp_home = tempfile.mkdtemp(prefix="ezadmin_chrome_home_")
         launch_env = os.environ.copy()
         launch_env["HOME"] = tmp_home
         browser = None
+        context = None
         launch_err = None
         if browser_pref == "firefox":
             browser = p.firefox.launch(headless=headless)
+            context = browser.new_context()
         elif browser_pref == "webkit":
             browser = p.webkit.launch(headless=headless)
+            context = browser.new_context()
         else:
             try:
                 if channel:
-                    browser = p.chromium.launch(headless=headless, channel=channel, args=launch_args, env=launch_env)
+                    context = p.chromium.launch_persistent_context(
+                        user_data_dir=profile_dir,
+                        headless=headless,
+                        channel=channel,
+                        args=launch_args,
+                        env=launch_env,
+                    )
                 else:
-                    browser = p.chromium.launch(headless=headless, args=launch_args, env=launch_env)
+                    context = p.chromium.launch_persistent_context(
+                        user_data_dir=profile_dir,
+                        headless=headless,
+                        args=launch_args,
+                        env=launch_env,
+                    )
             except Exception as e:
                 launch_err = e
                 if allow_fallback:
                     print("Chromium 실행 실패, Firefox로 대체 실행합니다.")
                     browser = p.firefox.launch(headless=headless)
-        if browser is None:
+                    context = browser.new_context()
+        if context is None:
             if launch_err:
                 raise launch_err
             raise RuntimeError("브라우저를 실행하지 못했습니다.")
-        page = browser.new_page()
+        page = context.pages[0] if context.pages else context.new_page()
         page.goto(login_url, wait_until="domcontentloaded")
 
         # Open login modal by clicking the top-right profile icon.
@@ -476,7 +498,10 @@ def fetch_ezadmin_stock(
                         "normal_stock": _parse_int(stock_raw),
                     }
                 )
-        browser.close()
+        if context:
+            context.close()
+        if browser:
+            browser.close()
         return rows
 
 
@@ -752,14 +777,28 @@ def main() -> None:
         )
         headless = _get_bool_env("EZADMIN_HEADLESS", default=False)
 
-        rows = fetch_ezadmin_stock(
-            domain=domain,
-            username=username,
-            password=password,
-            login_url=login_url,
-            inventory_url=inventory_url,
-            headless=headless,
-        )
+        retry_count = int(os.getenv("EZADMIN_RETRY_COUNT", "3"))
+        retry_delay = int(os.getenv("EZADMIN_RETRY_DELAY_SEC", "30"))
+        last_err: Optional[Exception] = None
+        for attempt in range(1, retry_count + 1):
+            try:
+                rows = fetch_ezadmin_stock(
+                    domain=domain,
+                    username=username,
+                    password=password,
+                    login_url=login_url,
+                    inventory_url=inventory_url,
+                    headless=headless,
+                )
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                print(f"[WARN] ezadmin stock fetch failed (attempt {attempt}/{retry_count}): {e}")
+                if attempt < retry_count:
+                    time.sleep(retry_delay)
+        if last_err:
+            raise last_err
 
         # Filter to required SKUs
         allowed = set(SKU_COLUMN_MAP.keys())
