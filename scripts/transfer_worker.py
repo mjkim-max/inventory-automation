@@ -273,7 +273,9 @@ def main() -> None:
 
     # Ezadmin inbound processing (grouped by date/from/to)
     ez_headless = os.getenv("EZADMIN_HEADLESS", "1") != "0"
-    if create_inbound_request is not None:
+    if create_inbound_request is None:
+        print("[WARN] ezadmin_inbound_request not available.")
+    else:
         ez_groups: Dict[tuple, List[tuple]] = {}
         for row_idx, row in rows:
             status = _get(row, header_idx.get("status", -1))
@@ -290,6 +292,7 @@ def main() -> None:
             key = (date_str, from_channel, to_channel)
             ez_groups.setdefault(key, []).append((row_idx, row))
 
+        print(f"[INFO] ezadmin groups: {len(ez_groups)}")
         for (date_str, from_channel, _to_channel), group_rows in ez_groups.items():
             items = []
             for _row_idx, row in group_rows:
