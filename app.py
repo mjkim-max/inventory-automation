@@ -8,6 +8,7 @@ import streamlit.components.v1 as components
 import gspread
 from google.oauth2.service_account import Credentials
 import json
+import re
 
 
 SHEET_COLUMNS = {
@@ -54,7 +55,15 @@ def _connect_sheet(readonly: bool = True):
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(dict(sa), scopes=scopes)
     client = gspread.authorize(creds)
-    ss = client.open_by_key(sheet_id)
+    try:
+        ss = client.open_by_key(sheet_id)
+    except Exception:
+        # If a full URL was provided, extract the ID and retry
+        m = re.search(r"/d/([a-zA-Z0-9-_]+)", str(sheet_id))
+        if m:
+            ss = client.open_by_key(m.group(1))
+        else:
+            raise
     return ss.worksheet(worksheet)
 
 
@@ -72,7 +81,14 @@ def _connect_sales_sheet(readonly: bool = True):
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(dict(sa), scopes=scopes)
     client = gspread.authorize(creds)
-    ss = client.open_by_key(sheet_id)
+    try:
+        ss = client.open_by_key(sheet_id)
+    except Exception:
+        m = re.search(r"/d/([a-zA-Z0-9-_]+)", str(sheet_id))
+        if m:
+            ss = client.open_by_key(m.group(1))
+        else:
+            raise
     return ss.worksheet(worksheet)
 
 
@@ -321,7 +337,11 @@ def main() -> None:
         st.write("")
         # 재고 최신화 버튼 제거 (로컬 스케줄러로만 동작)
 
-    ws = _connect_sheet(readonly=True)
+    try:
+        ws = _connect_sheet(readonly=True)
+    except Exception as e:
+        st.error(f"구글 시트 연결 실패: {e}")
+        st.stop()
     values = ws.get_all_values()
     if not values:
         st.warning("시트 데이터가 비어 있습니다.")
