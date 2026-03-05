@@ -147,7 +147,6 @@ def _connect_sheet(cfg: Dict[str, Any], retries: int = 5, backoff_sec: int = 3):
                 return ss.worksheet("TransferQueue")
             except Exception:
                 ws = ss.add_worksheet(title="TransferQueue", rows=2000, cols=12)
-                _ensure_transfer_queue_header(ws)
                 return ws
         except Exception as e:
             last_err = e
@@ -306,7 +305,7 @@ def _run_once() -> None:
 
     cfg = _load_secrets()
     ws = _connect_sheet(cfg)
-    _ensure_transfer_queue_header(ws)
+    # Do not modify headers automatically per user request.
 
     values = ws.get_all_values()
     if not values:
