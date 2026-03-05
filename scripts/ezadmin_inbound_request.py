@@ -375,6 +375,14 @@ def create_inbound_request(
             if not sheet_link:
                 raise RuntimeError("생성된 전표 링크를 찾지 못했습니다.")
             href = sheet_link.first.get_attribute("href") or ""
+            sheet_id_from_href = None
+            try:
+                if href:
+                    q = urllib.parse.urlparse(href).query
+                    qs = urllib.parse.parse_qs(q)
+                    sheet_id_from_href = (qs.get("sheet") or qs.get("seq") or [None])[0]
+            except Exception:
+                sheet_id_from_href = None
             if not href:
                 # fallback: click and detect popup
                 detail_popup = _open_popup_or_same(page, sheet_link, context, wait_url_contains="template=IM10")
@@ -385,7 +393,7 @@ def create_inbound_request(
             detail_popup.wait_for_timeout(800)
 
             # Open product add page directly using sheet id
-            sheet_id = None
+            sheet_id = sheet_id_from_href
             try:
                 q = urllib.parse.urlparse(detail_popup.url).query
                 qs = urllib.parse.parse_qs(q)
