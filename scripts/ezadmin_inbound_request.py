@@ -406,15 +406,13 @@ def create_inbound_request(
                                 sheet_id_from_href = m.group(1)
             except Exception:
                 sheet_id_from_href = None
-            if not href:
-                if sheet_id_from_href:
-                    detail_url = f"{base}/popup35.htm?template=IM10&sheet={sheet_id_from_href}"
-                    detail_popup = context.new_page()
-                    detail_popup.goto(detail_url, wait_until="domcontentloaded")
-                else:
-                    # fallback: click and detect popup
-                    detail_popup = _open_popup_or_same(page, sheet_link, context, wait_url_contains="template=IM10")
-            else:
+            # Try clicking first to follow the site's flow
+            detail_popup = _open_popup_or_same(page, sheet_link, context, wait_url_contains="template=IM10")
+            if detail_popup is page and sheet_id_from_href:
+                detail_url = f"{base}/popup35.htm?template=IM10&sheet={sheet_id_from_href}"
+                detail_popup = context.new_page()
+                detail_popup.goto(detail_url, wait_until="domcontentloaded")
+            elif detail_popup is page and href:
                 detail_url = urllib.parse.urljoin(base + "/", href)
                 detail_popup = context.new_page()
                 detail_popup.goto(detail_url, wait_until="domcontentloaded")
