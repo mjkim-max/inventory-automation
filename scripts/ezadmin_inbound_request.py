@@ -96,7 +96,7 @@ def _find_in_frames(page, selectors: List[str]):
 def _fill_labeled_input(scope, label_text: str, value: str) -> bool:
     # Try table label -> input
     loc = scope.locator(
-        f\"xpath=//*[contains(normalize-space(.), '{label_text}')]/following::input[1]\"
+        f"xpath=//*[contains(normalize-space(.), '{label_text}')]/following::input[1]"
     )
     if loc.count() > 0:
         loc.first.fill(value)
