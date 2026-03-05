@@ -350,8 +350,7 @@ def _parse_date(value: str) -> Optional[datetime]:
 
 def _load_intake_rows(sheet) -> List[Dict[str, str]]:
     try:
-        ws = sheet.spreadsheet.worksheet("Add_inventory")
-        values = ws.get_all_values()
+        values = _get_sheet_values_cached("Add_inventory")
         if not values or len(values) < 2:
             return []
         header = values[0]
