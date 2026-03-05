@@ -501,6 +501,13 @@ def _run_once() -> None:
         if to_channel != "품고":
             continue
 
+        # For ezadmin -> poomgo, only proceed after ezadmin outbound is done
+        if from_channel == "이지어드민" and status != "EZADMIN_DONE":
+            continue
+        if external_id:
+            # Already created in Poomgo
+            continue
+
         missing = []
         if not poomgo_token:
             missing.append("poomgo.token")
