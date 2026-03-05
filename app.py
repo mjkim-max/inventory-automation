@@ -164,13 +164,14 @@ def _ensure_transfer_queue_header(ws) -> None:
         "updated_at",
         "action",
         "external_id",
+        "sheet_name",
     ]
     values = ws.get_all_values()
     if not values:
         ws.append_row(header)
         return
-    if values[0] != header:
-        ws.insert_row(header, index=1)
+    if values[0][: len(header)] != header:
+        ws.update("A1", [header])
 
 
 def _get_latest_date_row(values: List[List[str]]) -> int:
