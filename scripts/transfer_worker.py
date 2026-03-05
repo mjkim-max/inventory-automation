@@ -184,7 +184,7 @@ def _ensure_transfer_queue_header(ws) -> None:
     # Clean duplicate header rows that may have been inserted previously
     values = ws.get_all_values()
     delete_rows = []
-    for i, row in enumerate(values[1:10], start=2):
+    for i, row in enumerate(values[1:], start=2):
         if row[: len(header)] == header:
             delete_rows.append(i)
     for i in reversed(delete_rows):
