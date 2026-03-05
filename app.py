@@ -347,7 +347,7 @@ def _calc_avg_outflow(
         if past_dt < dt <= today_dt:
             intake_sum += _safe_int(r.get("quantity", "0"))
 
-    avg = (past_stock - today_stock - intake_sum) / days
+    avg = (past_stock - today_stock + intake_sum) / days
     if avg < 0:
         avg = 0.0
     return avg, days
