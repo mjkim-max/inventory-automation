@@ -148,6 +148,19 @@ def _fill_labeled_input(scope, label_text: str, value: str) -> bool:
     return False
 
 
+def _select_option_contains(select_loc, text: str) -> bool:
+    try:
+        opts = select_loc.locator("option")
+        for i in range(opts.count()):
+            txt = opts.nth(i).text_content() or ""
+            if text in txt:
+                select_loc.select_option(value=opts.nth(i).get_attribute("value"))
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _login_ezadmin(page, *, domain: str, username: str, password: str, login_url: str) -> None:
     page.goto(login_url, wait_until="domcontentloaded")
     profile_btn = _find_in_frames(
@@ -328,6 +341,18 @@ def create_inbound_request(
                 raise RuntimeError("전표생성 확인 버튼을 찾지 못했습니다.")
             create_btn.first.click()
             create_popup.wait_for_timeout(800)
+
+            # Search created sheet by name to ensure it is visible
+            search_select = _find_in_frames(page, ["select[name*='search']", "select#search_kind", "select[name*='key']"])
+            if search_select:
+                _select_option_contains(search_select.first, "전표명")
+            search_input = _find_in_frames(page, ["input[name*='search']", "input#search_word", "input[name*='keyword']"])
+            if search_input:
+                search_input.first.fill(sheet_name)
+            search_btn = _find_in_frames(page, ["div#search", "div.table_search_button", "button:has-text('검색')", "text=검색"])
+            if search_btn:
+                search_btn.first.click()
+                page.wait_for_timeout(1200)
 
             # Find created sheet and open detail (open href directly)
             page.wait_for_timeout(1200)
