@@ -939,12 +939,10 @@ def main() -> None:
         # Skip manual for order recommendation
         if label == "사용설명서":
             continue
-        avg_90 = _avg_daily(sales_hist, label, 90)
-        avg_30 = _avg_daily(sales_hist, label, 30)
-        if avg_90 == 0.0 and avg_30 == 0.0:
-            fallback_avg = _fallback_avg_from_stock(values, intake_rows, key)
-            avg_90 = fallback_avg
-            avg_30 = fallback_avg
+        # Use stock-flow based average (inventory movement) for recommendations
+        fallback_avg = _fallback_avg_from_stock(values, intake_rows, key)
+        avg_90 = fallback_avg
+        avg_30 = fallback_avg
         r = (avg_30 / avg_90) if avg_90 > 0 else 1.0
         g = 1 + growth_weight * (r - 1)
         g = max(growth_cap[0], min(growth_cap[1], g))
