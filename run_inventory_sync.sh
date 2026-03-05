@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-ROOT="/Users/mune/Desktop/Cursor/inventory-automation"
+ROOT="/Users/mune/Workspace/inventory-automation"
 VENV="$ROOT/.venv"
 
 cd "$ROOT"
