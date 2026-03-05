@@ -567,13 +567,9 @@ def main() -> None:
             if recommend < 0:
                 recommend = 0
             recommend_text = str(recommend)
-            start_dt = _now_kst().date()
-            end_dt = start_dt + timedelta(days=cover_days)
-            usage_range = f"{start_dt.strftime('%m/%d')} ~ {end_dt.strftime('%m/%d')}"
         else:
             days_text = "-"
             recommend_text = "-"
-            usage_range = "-"
         total_rows.append(
             {
                 "품목명": label,
@@ -581,10 +577,10 @@ def main() -> None:
                 "일평균 출고량": avg_val,
                 "출고 가능 일 수": days_text,
                 "발주 추천수량": recommend_text,
-                "재고 사용 일자": usage_range,
             }
         )
     st.dataframe(total_rows, use_container_width=True, hide_index=True)
+    st.caption("발주 리드기간 14일, 판매 기간 35일 기준, 안전재고 0.3")
 
     st.divider()
     left, divider, right = st.columns([0.49, 0.02, 0.49])
