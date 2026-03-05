@@ -524,7 +524,7 @@ def main() -> None:
                     "품목명": label,
                     "재고수량": stock,
                     "일평균 출고량": avg_val,
-                    "출고 가능 일 수": days_text,
+                    "출고 가능": days_text,
                 }
             )
         return rows
@@ -575,7 +575,7 @@ def main() -> None:
                 "품목명": label,
                 "재고수량": f"{stock_sum:,}",
                 "일평균 출고량": avg_val,
-                "출고 가능 일 수": days_text,
+                "출고 가능": days_text,
                 "발주 추천수량": recommend_text,
             }
         )
