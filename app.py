@@ -182,6 +182,79 @@ def _get_latest_sales_snapshot():
     }
 
 
+def _load_sales_history(days: int = 90) -> Dict[str, Dict[str, int]]:
+    values = _get_sales_values_cached()
+    if len(values) < 2:
+        return {}
+    # Keep latest snapshot per date (by fetched_at timestamp)
+    latest_by_date: Dict[str, Dict[str, str]] = {}
+    for i, row in enumerate(values):
+        if i == 0 or len(row) < 3:
+            continue
+        fetched_at = row[1].strip()
+        payload_json = row[2].strip()
+        if not payload_json:
+            continue
+        try:
+            payload = json.loads(payload_json)
+        except Exception:
+            continue
+        date_val = str(payload.get("date", "")).strip()
+        if not date_val:
+            continue
+        # Normalize to YYYY-MM-DD
+        try:
+            date_val = datetime.fromisoformat(date_val).strftime("%Y-%m-%d")
+        except Exception:
+            date_val = date_val.split(" ")[0]
+        prev = latest_by_date.get(date_val)
+        if not prev or fetched_at >= prev.get("fetched_at", ""):
+            latest_by_date[date_val] = {
+                "fetched_at": fetched_at,
+                "payload_json": payload_json,
+            }
+
+    cutoff = (_now_kst() - timedelta(days=days)).strftime("%Y-%m-%d")
+    per_date: Dict[str, Dict[str, int]] = {}
+    label_map = {
+        "P00000CL000E": "플라우드 노트 / 블랙",
+        "P00000CL000I": "플라우드 노트 / 실버",
+        "P00000DN000M": "플라우드 노트 Pro / 블랙",
+        "P00000DN000N": "플라우드 노트 Pro / 실버",
+        "P00000CT000U": "플라우드 노트핀S / 블랙",
+        "P00000CT000V": "플라우드 노트핀S / 실버",
+    }
+    coupang_map = {
+        "94199205555": "플라우드 노트 Pro / 블랙",
+        "94199205552": "플라우드 노트 Pro / 실버",
+        "90737907302": "플라우드 노트 / 블랙",
+        "90737907295": "플라우드 노트 / 실버",
+        "91942294087": "플라우드 노트핀S / 블랙",
+        "91942294096": "플라우드 노트핀S / 실버",
+    }
+    for date_val, info in latest_by_date.items():
+        if date_val < cutoff:
+            continue
+        try:
+            payload = json.loads(info["payload_json"])
+        except Exception:
+            continue
+        cafe_items = payload.get("cafe24_items", {}) or {}
+        smart_items = payload.get("smartstore_items", {}) or {}
+        coupang_items = payload.get("coupang_items", {}) or {}
+        day = per_date.setdefault(date_val, {})
+        # Cafe24 by code -> name
+        for code, name in label_map.items():
+            day[name] = day.get(name, 0) + _safe_int(cafe_items.get(code, 0))
+        # Smartstore by name
+        for name in label_map.values():
+            day[name] = day.get(name, 0) + _safe_int(smart_items.get(name, 0))
+        # Coupang by id -> name
+        for cid, name in coupang_map.items():
+            day[name] = day.get(name, 0) + _safe_int(coupang_items.get(cid, 0))
+    return per_date
+
+
 def _ensure_add_inventory_header(ws) -> None:
     header = ["date", "from_channel", "channel", "sku_name", "quantity"]
     values = ws.get_all_values()
@@ -787,6 +860,73 @@ def main() -> None:
                         if deleted:
                             st.rerun()
 
+
+    st.divider()
+    st.subheader("발주 추천")
+    try:
+        sales_hist = _load_sales_history(days=90)
+    except Exception:
+        sales_hist = {}
+
+    lead_time_days = 14
+    cover_days = 35
+    safety_factor = 0.3
+    growth_cap = (0.7, 1.3)
+    growth_weight = 0.5
+
+    def _avg_daily(sales_by_date: Dict[str, Dict[str, int]], sku_name: str, days_window: int) -> float:
+        if not sales_by_date:
+            return 0.0
+        cutoff = (_now_kst() - timedelta(days=days_window)).strftime("%Y-%m-%d")
+        total = 0
+        days = 0
+        for d, items in sales_by_date.items():
+            if d < cutoff:
+                continue
+            total += _safe_int(items.get(sku_name, 0))
+            days += 1
+        if days == 0:
+            return 0.0
+        return total / days
+
+    order_rows = []
+    for key, label in SKU_LABELS.items():
+        # Skip manual for order recommendation
+        if label == "사용설명서":
+            continue
+        avg_90 = _avg_daily(sales_hist, label, 90)
+        avg_30 = _avg_daily(sales_hist, label, 30)
+        r = (avg_30 / avg_90) if avg_90 > 0 else 1.0
+        g = 1 + growth_weight * (r - 1)
+        g = max(growth_cap[0], min(growth_cap[1], g))
+        forecast = avg_90 * g
+        cover_demand = forecast * cover_days
+        safety_stock = cover_demand * safety_factor
+
+        stock_total = 0
+        if key in summary:
+            stock_total += _safe_int(summary[key].get("poomgo", "0"))
+            stock_total += _safe_int(summary[key].get("ezadmin", "0"))
+            stock_total += _safe_int(summary[key].get("coupang", "0"))
+
+        recommend = int(round(cover_demand + safety_stock - stock_total))
+        if recommend < 0:
+            recommend = 0
+        order_rows.append(
+            {
+                "품목명": label,
+                "최근90일 일평균": f"{avg_90:.2f}",
+                "최근30일 일평균": f"{avg_30:.2f}",
+                "성장계수": f"{g:.2f}",
+                "현재재고(합계)": stock_total,
+                "추천발주수량": recommend,
+            }
+        )
+
+    st.caption(
+        f"리드타임 {lead_time_days}일, 커버 {cover_days}일, 안전재고 {int(safety_factor*100)}% 반영"
+    )
+    st.dataframe(order_rows, use_container_width=True, hide_index=True)
 
     st.divider()
     st.subheader("판매수량")
