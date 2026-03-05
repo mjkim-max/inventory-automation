@@ -288,8 +288,8 @@ def create_inbound_request(
             browser = p.chromium.launch(headless=headless, channel=channel, args=launch_args, env=launch_env)
         else:
             browser = p.chromium.launch(headless=headless, args=launch_args, env=launch_env)
-        page = browser.new_page()
-        context = page.context
+        context = browser.new_context()
+        page = context.new_page()
         try:
             _login_ezadmin(page, domain=domain, username=username, password=password, login_url=login_url)
 
