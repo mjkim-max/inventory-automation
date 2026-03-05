@@ -245,7 +245,7 @@ def _poomgo_cancel_receiving(*, token: str, receiving_id: str) -> None:
         raise RuntimeError(f"poomgo error {resp.status_code}: {resp.text[:200]}")
 
 
-def main() -> None:
+def _run_once() -> None:
     # Preflight DNS check (helps flaky resolver on this host)
     for i in range(1, 4):
         try:
@@ -525,4 +525,19 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    loop = os.getenv("TRANSFER_WORKER_LOOP", "0") == "1"
+    try:
+        interval = int(os.getenv("TRANSFER_WORKER_INTERVAL", "60"))
+    except Exception:
+        interval = 60
+    interval = max(10, interval)
+    if not loop:
+        _run_once()
+    else:
+        print(f"[INFO] loop enabled: interval={interval}s")
+        while True:
+            try:
+                _run_once()
+            except Exception as e:
+                print(f"[ERROR] worker failed: {e}")
+            time.sleep(interval)
