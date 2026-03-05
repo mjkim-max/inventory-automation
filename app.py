@@ -590,6 +590,7 @@ def main() -> None:
         intake_rows = []
         intake_groups = []
         tq_status_map = {}
+        tq_status_simple = {}
         filter_date = st.date_input("날짜 필터", value=None)
         try:
             intake_values = _get_sheet_values_cached("Add_inventory")
@@ -634,8 +635,13 @@ def main() -> None:
                         prev = tq_status_map.get(key)
                         if not prev or row_i >= int(prev.get("row_i", 0)):
                             tq_status_map[key] = {"status": status, "updated": updated, "row_i": row_i}
+                        key_simple = (str(date), str(from_ch), str(to_ch), str(sku), str(qty))
+                        prev_simple = tq_status_simple.get(key_simple)
+                        if not prev_simple or row_i >= int(prev_simple.get("row_i", 0)):
+                            tq_status_simple[key_simple] = {"status": status, "updated": updated, "row_i": row_i}
                 except Exception:
                     tq_status_map = {}
+                    tq_status_simple = {}
 
                 # Group by (date, from_channel, channel)
                 # Load created_at per (date/from/to/sku/qty) to group by created_at when possible
@@ -709,11 +715,21 @@ def main() -> None:
                         qty = _val(row_dict, "quantity")
                         key = (str(date_val), str(from_ch), str(to_ch), str(created_val), str(sku), str(qty))
                         status = tq_status_map.get(key, {}).get("status", "")
+                        if not status:
+                            key_simple = (str(date_val), str(from_ch), str(to_ch), str(sku), str(qty))
+                            status = tq_status_simple.get(key_simple, {}).get("status", "")
+                        status_label = status if status else "-"
+                        if status == "CANCEL_PENDING":
+                            status_label = "취소중"
+                        elif status == "CANCELLED":
+                            status_label = "취소완료"
+                        elif status == "CANCEL_FAILED":
+                            status_label = "취소실패"
                         display_rows.append(
                             {
                                 "품목명": sku,
                                 "수량": qty,
-                                "상태": status if status else "-",
+                                "상태": status_label,
                             }
                         )
                     st.dataframe(display_rows, use_container_width=True, hide_index=True)
