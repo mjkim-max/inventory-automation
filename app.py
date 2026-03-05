@@ -578,7 +578,8 @@ def main() -> None:
             key_options = []
             row_index_map = {}
             for row_idx, r in recent:
-                label = f"{_val(r, 'date')} | {_val(r, 'from_channel')} | {_val(r, 'channel')} | {_val(r, 'sku_name')} | {_val(r, 'quantity')}"
+                row_dict = dict(zip(header, r))
+                label = f"{_val(row_dict, 'date')} | {_val(row_dict, 'from_channel')} | {_val(row_dict, 'channel')} | {_val(row_dict, 'sku_name')} | {_val(row_dict, 'quantity')}"
                 key_options.append(label)
                 row_index_map[label] = row_idx
             target = del_col1.selectbox("삭제 대상", key_options)
