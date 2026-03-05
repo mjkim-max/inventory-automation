@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -92,7 +93,7 @@ def _load_secrets() -> Dict[str, Any]:
     return cfg
 
 
-def _connect_sheet(cfg: Dict[str, Any]):
+def _connect_sheet(cfg: Dict[str, Any], retries: int = 5, backoff_sec: int = 3):
     if gspread is None or Credentials is None:
         raise RuntimeError("gspread/google-auth not installed.")
     gs_cfg = cfg.get("google_sheets", {})
@@ -104,14 +105,23 @@ def _connect_sheet(cfg: Dict[str, Any]):
         raise RuntimeError("google_sheets.sheet_id is required.")
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(dict(sa), scopes=scopes)
-    client = gspread.authorize(creds)
-    ss = client.open_by_key(sheet_id)
-    try:
-        return ss.worksheet("TransferQueue")
-    except Exception:
-        ws = ss.add_worksheet(title="TransferQueue", rows=2000, cols=12)
-        _ensure_transfer_queue_header(ws)
-        return ws
+    last_err: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            client = gspread.authorize(creds)
+            ss = client.open_by_key(sheet_id)
+            try:
+                return ss.worksheet("TransferQueue")
+            except Exception:
+                ws = ss.add_worksheet(title="TransferQueue", rows=2000, cols=12)
+                _ensure_transfer_queue_header(ws)
+                return ws
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                print(f"[WARN] sheet connect failed (attempt {attempt}/{retries}): {e}")
+                time.sleep(backoff_sec)
+    raise RuntimeError(f"구글 시트 연결 실패: {last_err}")
 
 
 def _ensure_transfer_queue_header(ws) -> None:
