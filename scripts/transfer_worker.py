@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -51,6 +52,23 @@ SKU_NAME_TO_BARCODE = {
     "노트핀S 블랙": "0199284031340",
     "노트핀S 실버": "0199284909670",
 }
+
+# DNS workaround: getaddrinfo fails while gethostbyname succeeds on this host.
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    try:
+        return _orig_getaddrinfo(host, port, family, type, proto, flags)
+    except socket.gaierror as e:
+        try:
+            ipv4 = socket.gethostbyname(host)
+            return _orig_getaddrinfo(ipv4, port, socket.AF_INET, type or socket.SOCK_STREAM, proto, flags)
+        except Exception:
+            raise e
+
+
+socket.getaddrinfo = _patched_getaddrinfo
 
 
 def _load_toml(path: Path) -> Dict[str, Any]:
