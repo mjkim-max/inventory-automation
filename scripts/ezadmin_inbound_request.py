@@ -375,17 +375,32 @@ def create_inbound_request(
             if not sheet_link:
                 raise RuntimeError("생성된 전표 링크를 찾지 못했습니다.")
             href = sheet_link.first.get_attribute("href") or ""
+            onclick = sheet_link.first.get_attribute("onclick") or ""
             sheet_id_from_href = None
             try:
-                if href:
-                    q = urllib.parse.urlparse(href).query
+                raw = href or onclick or ""
+                if raw:
+                    q = urllib.parse.urlparse(raw).query
                     qs = urllib.parse.parse_qs(q)
                     sheet_id_from_href = (qs.get("sheet") or qs.get("seq") or [None])[0]
+                if not sheet_id_from_href and raw:
+                    m = re.search(r"(sheet|seq)=?(\\d+)", raw)
+                    if m:
+                        sheet_id_from_href = m.group(2)
+                if not sheet_id_from_href and raw:
+                    m = re.search(r"(\\d{1,10})", raw)
+                    if m:
+                        sheet_id_from_href = m.group(1)
             except Exception:
                 sheet_id_from_href = None
             if not href:
-                # fallback: click and detect popup
-                detail_popup = _open_popup_or_same(page, sheet_link, context, wait_url_contains="template=IM10")
+                if sheet_id_from_href:
+                    detail_url = f"{base}/popup35.htm?template=IM10&sheet={sheet_id_from_href}"
+                    detail_popup = context.new_page()
+                    detail_popup.goto(detail_url, wait_until="domcontentloaded")
+                else:
+                    # fallback: click and detect popup
+                    detail_popup = _open_popup_or_same(page, sheet_link, context, wait_url_contains="template=IM10")
             else:
                 detail_url = urllib.parse.urljoin(base + "/", href)
                 detail_popup = context.new_page()
