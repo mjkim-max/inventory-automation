@@ -260,7 +260,7 @@ def create_inbound_request(
     inbound_url = _get_cfg_value(cfg, "ezadmin", "inbound_url", env="EZADMIN_INBOUND_URL", default=INBOUND_LIST_URL_DEFAULT)
     parsed = urllib.parse.urlparse(inbound_url)
     base = f"{parsed.scheme}://{parsed.netloc}"
-    inbound_create_url = f\"{base}/popup35.htm?template=IM16\"
+    inbound_create_url = f"{base}/popup35.htm?template=IM16"
 
     if not domain or not username or not password:
         raise RuntimeError("ezadmin credentials missing (domain/username/password).")
@@ -359,7 +359,7 @@ def create_inbound_request(
                     raise RuntimeError("상품추가 버튼을 찾지 못했습니다.")
                 product_popup = _open_popup_or_same(detail_popup, add_btn, context, wait_url_contains="template=IM13")
             else:
-                product_url = f\"{base}/popup35.htm?template=IM13&seq={sheet_id}\"
+                product_url = f"{base}/popup35.htm?template=IM13&seq={sheet_id}"
                 product_popup = context.new_page()
                 product_popup.goto(product_url, wait_until="domcontentloaded")
             product_popup.wait_for_timeout(800)
