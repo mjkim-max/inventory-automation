@@ -287,6 +287,7 @@ def _run_once() -> None:
         return
 
     poomgo_cfg = cfg.get("poomgo", {})
+    poomgo_intake_enabled = os.getenv("POOMGO_INTAKE_ENABLE", "1") == "1"
     poomgo_token = poomgo_cfg.get("token") or os.getenv("POOMGO_TOKEN", "")
     recv_cfg = poomgo_cfg.get("receiving", {})
     destination_warehouse_raw = str(
@@ -506,6 +507,8 @@ def _run_once() -> None:
             continue
 
         if to_channel != "품고":
+            continue
+        if not poomgo_intake_enabled:
             continue
 
         # For ezadmin -> poomgo, only proceed after ezadmin outbound is done
