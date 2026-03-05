@@ -920,16 +920,24 @@ def main() -> None:
         if days <= 0:
             return 0.0
         intake_sum = 0
+        outbound_sum = 0
         sku_label = SKU_LABELS.get(sku_key, "")
+        in_scope = {"품고", "이지어드민", "쿠팡"}
         for r in intake_rows:
             if str(r.get("sku_name", "")) != sku_label:
                 continue
+            to_ch = str(r.get("channel", ""))
+            from_ch = str(r.get("from_channel", ""))
             dt = _parse_date(str(r.get("date", "")))
             if not dt:
                 continue
             if past_dt < dt <= today_dt:
-                intake_sum += _safe_int(r.get("quantity", "0"))
-        avg = (past_stock - today_stock + intake_sum) / days
+                qty = _safe_int(r.get("quantity", "0"))
+                if to_ch in in_scope:
+                    intake_sum += qty
+                if from_ch in in_scope:
+                    outbound_sum += qty
+        avg = (past_stock - today_stock + intake_sum - outbound_sum) / days
         if avg < 0:
             avg = 0.0
         return avg
