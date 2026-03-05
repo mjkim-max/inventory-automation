@@ -905,9 +905,11 @@ def main() -> None:
             dt = _parse_date(row[date_col].strip())
             if not dt:
                 continue
-            # Use poomgo stock only for flow-based avg (matches ops expectation)
-            col = cols.get("poomgo", "")
-            total = _safe_int(_row_value(row, col)) if col else 0
+            total = 0
+            for ch in ("poomgo", "ezadmin", "coupang"):
+                col = cols.get(ch, "")
+                if col:
+                    total += _safe_int(_row_value(row, col))
             series.append((dt, total))
         if len(series) < 2:
             return 0.0
@@ -920,7 +922,7 @@ def main() -> None:
         intake_sum = 0
         outbound_sum = 0
         sku_label = SKU_LABELS.get(sku_key, "")
-        in_scope = {"품고"}
+        in_scope = {"품고", "이지어드민", "쿠팡"}
         for r in intake_rows:
             if str(r.get("sku_name", "")) != sku_label:
                 continue
