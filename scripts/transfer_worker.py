@@ -275,7 +275,10 @@ def main() -> None:
 
     # Ezadmin inbound processing (grouped by date/from/to)
     ez_headless = os.getenv("EZADMIN_HEADLESS", "1") != "0"
-    if create_inbound_request is None:
+    ez_enabled = os.getenv("EZADMIN_INBOUND_ENABLE", "0") == "1"
+    if not ez_enabled:
+        print("[INFO] EZADMIN_INBOUND_ENABLE != 1; skipping ezadmin inbound.")
+    elif create_inbound_request is None:
         print(f"[WARN] ezadmin_inbound_request not available: {_EZADMIN_IMPORT_ERROR}")
     else:
         ez_groups: Dict[tuple, List[tuple]] = {}
