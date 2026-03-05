@@ -37,6 +37,12 @@ try:
 except Exception as e:  # pragma: no cover
     create_inbound_request = None  # type: ignore[assignment]
     _EZADMIN_IMPORT_ERROR = str(e)
+try:
+    from ezadmin_outbound_request import create_outbound_request
+    _EZADMIN_OUTBOUND_IMPORT_ERROR = ""
+except Exception as e:  # pragma: no cover
+    create_outbound_request = None  # type: ignore[assignment]
+    _EZADMIN_OUTBOUND_IMPORT_ERROR = str(e)
 
 SKU_NAME_TO_BARCODE = {
     "플라우드 노트 Pro / 블랙": "199284926073",
@@ -314,6 +320,10 @@ def _run_once() -> None:
     # Ezadmin inbound processing (grouped by date/from/to)
     ez_headless = os.getenv("EZADMIN_HEADLESS", "1") != "0"
     ez_enabled = os.getenv("EZADMIN_INBOUND_ENABLE", "0") == "1"
+    ez_out_enabled = os.getenv("EZADMIN_OUTBOUND_ENABLE")
+    if ez_out_enabled is None:
+        ez_out_enabled = "1" if ez_enabled else "0"
+    ez_out_enabled = ez_out_enabled == "1"
     if not ez_enabled:
         print("[INFO] EZADMIN_INBOUND_ENABLE != 1; skipping ezadmin inbound.")
     elif create_inbound_request is None:
@@ -377,6 +387,68 @@ def _run_once() -> None:
                         updated_at=now,
                     )
 
+    # Ezadmin outbound processing (이지어드민 -> 품고)
+    if not ez_out_enabled:
+        print("[INFO] EZADMIN_OUTBOUND_ENABLE != 1; skipping ezadmin outbound.")
+    elif create_outbound_request is None:
+        print(f"[WARN] ezadmin_outbound_request not available: {_EZADMIN_OUTBOUND_IMPORT_ERROR}")
+    else:
+        ez_out_groups: Dict[tuple, List[tuple]] = {}
+        for row_idx, row in rows:
+            status = _get(row, header_idx.get("status", -1))
+            action = _get(row, header_idx.get("action", -1))
+            to_channel = _get(row, header_idx.get("to_channel", -1))
+            from_channel = _get(row, header_idx.get("from_channel", -1))
+            date_str = _get(row, header_idx.get("date", -1))
+            if action == "CANCEL":
+                continue
+            if status not in {"", "PENDING"}:
+                continue
+            if not (from_channel == "이지어드민" and to_channel == "품고"):
+                continue
+            key = (date_str, from_channel, to_channel)
+            ez_out_groups.setdefault(key, []).append((row_idx, row))
+
+        print(f"[INFO] ezadmin outbound groups: {len(ez_out_groups)}")
+        for (date_str, from_channel, _to_channel), group_rows in ez_out_groups.items():
+            items = []
+            for _row_idx, row in group_rows:
+                items.append(
+                    {
+                        "sku_name": _get(row, header_idx.get("sku_name", -1)),
+                        "quantity": _get(row, header_idx.get("quantity", -1)),
+                    }
+                )
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                resp = create_outbound_request(
+                    items=items,
+                    date_str=date_str or datetime.now().strftime("%Y-%m-%d"),
+                    from_channel=from_channel or "이지어드민",
+                    headless=ez_headless,
+                    stop_after_create=False,
+                )
+                msg = f"ezadmin_outbound_sheet={resp.get('display_name') or resp.get('sheet_name','')}"
+                for row_idx, _ in group_rows:
+                    _update_row(
+                        ws,
+                        row_idx,
+                        header_idx,
+                        status="EZADMIN_DONE",
+                        message=msg,
+                        updated_at=now,
+                    )
+            except Exception as e:
+                for row_idx, _ in group_rows:
+                    _update_row(
+                        ws,
+                        row_idx,
+                        header_idx,
+                        status="FAILED",
+                        message=str(e)[:200],
+                        updated_at=now,
+                    )
+
     for row_idx, row in rows:
         status = _get(row, header_idx.get("status", -1))
         action = _get(row, header_idx.get("action", -1))
@@ -423,7 +495,7 @@ def _run_once() -> None:
                 )
             continue
 
-        if status not in {"", "PENDING"}:
+        if status not in {"", "PENDING", "EZADMIN_DONE"}:
             continue
 
         if to_channel != "품고":
