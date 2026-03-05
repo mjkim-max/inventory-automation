@@ -730,38 +730,44 @@ def fetch_coupang_stock(*, vendor_id: str, access_key: str, secret_key: str) -> 
 
 def main() -> None:
     cfg = _load_secrets()
-    domain = _get_cfg_value(cfg, "ezadmin", "domain", env="EZADMIN_DOMAIN")
-    username = _get_cfg_value(cfg, "ezadmin", "username", env="EZADMIN_USERNAME")
-    password = _get_cfg_value(cfg, "ezadmin", "password", env="EZADMIN_PASSWORD")
-    if not domain or not username or not password:
-        raise RuntimeError("EZADMIN_DOMAIN/USERNAME/PASSWORD 설정이 필요합니다.")
+    ezadmin_enabled = _get_bool_env("EZADMIN_STOCK_ENABLE", default=True)
+    poomgo_enabled = _get_bool_env("POOMGO_STOCK_ENABLE", default=True)
+    coupang_enabled = _get_bool_env("COUPANG_STOCK_ENABLE", default=True)
 
-    login_url = _get_cfg_value(cfg, "ezadmin", "login_url", env="EZADMIN_LOGIN_URL", default=LOGIN_URL_DEFAULT)
-    inventory_url = _get_cfg_value(
-        cfg,
-        "ezadmin",
-        "inventory_url",
-        env="EZADMIN_INVENTORY_URL",
-        default=INVENTORY_URL_DEFAULT,
-    )
-    headless = _get_bool_env("EZADMIN_HEADLESS", default=False)
+    rows: List[Dict[str, Any]] = []
+    if ezadmin_enabled:
+        domain = _get_cfg_value(cfg, "ezadmin", "domain", env="EZADMIN_DOMAIN")
+        username = _get_cfg_value(cfg, "ezadmin", "username", env="EZADMIN_USERNAME")
+        password = _get_cfg_value(cfg, "ezadmin", "password", env="EZADMIN_PASSWORD")
+        if not domain or not username or not password:
+            raise RuntimeError("EZADMIN_DOMAIN/USERNAME/PASSWORD 설정이 필요합니다.")
 
-    rows = fetch_ezadmin_stock(
-        domain=domain,
-        username=username,
-        password=password,
-        login_url=login_url,
-        inventory_url=inventory_url,
-        headless=headless,
-    )
+        login_url = _get_cfg_value(cfg, "ezadmin", "login_url", env="EZADMIN_LOGIN_URL", default=LOGIN_URL_DEFAULT)
+        inventory_url = _get_cfg_value(
+            cfg,
+            "ezadmin",
+            "inventory_url",
+            env="EZADMIN_INVENTORY_URL",
+            default=INVENTORY_URL_DEFAULT,
+        )
+        headless = _get_bool_env("EZADMIN_HEADLESS", default=False)
 
-    # Filter to required SKUs
-    allowed = set(SKU_COLUMN_MAP.keys())
-    rows = [r for r in rows if r["sku"] in allowed]
+        rows = fetch_ezadmin_stock(
+            domain=domain,
+            username=username,
+            password=password,
+            login_url=login_url,
+            inventory_url=inventory_url,
+            headless=headless,
+        )
 
-    payload = _rows_to_clipboard(rows)
-    if payload:
-        print("클립보드 복사 완료 (sku, normal_stock)")
+        # Filter to required SKUs
+        allowed = set(SKU_COLUMN_MAP.keys())
+        rows = [r for r in rows if r["sku"] in allowed]
+
+        payload = _rows_to_clipboard(rows)
+        if payload:
+            print("클립보드 복사 완료 (sku, normal_stock)")
 
     ws = _connect_sheet(cfg)
     today = datetime.now().strftime("%Y-%m-%d")
@@ -774,16 +780,17 @@ def main() -> None:
 
     # Build updates for ezadmin SKU columns
     updates = []
-    for r in rows:
-        col = SKU_COLUMN_MAP.get(r["sku"])
-        if not col:
-            continue
-        updates.append(
-            {
-                "range": f"{col}{row_idx}",
-                "values": [[r["normal_stock"]]],
-            }
-        )
+    if ezadmin_enabled:
+        for r in rows:
+            col = SKU_COLUMN_MAP.get(r["sku"])
+            if not col:
+                continue
+            updates.append(
+                {
+                    "range": f"{col}{row_idx}",
+                    "values": [[r["normal_stock"]]],
+                }
+            )
 
     # Fetch Poomgo and map to columns
     poomgo_token = _get_cfg_value(cfg, "poomgo", "token", env="POOMGO_TOKEN")
@@ -810,7 +817,7 @@ def main() -> None:
     )
     poomgo_ct_allowlist = [c.strip() for c in poomgo_ct_allow.split(",") if c.strip()]
     poomgo_path_allowlist = [p.strip() for p in poomgo_path_allow.split(",") if p.strip()]
-    if poomgo_token:
+    if poomgo_enabled and poomgo_token:
         poomgo_items = _fetch_poomgo_items(token=poomgo_token)
         poomgo = _poomgo_items_to_stock(
             poomgo_items,
@@ -863,7 +870,7 @@ def main() -> None:
     coupang_access = _get_cfg_value(cfg, "coupang", "access_key", env="COUPANG_ACCESS_KEY")
     coupang_secret = _get_cfg_value(cfg, "coupang", "secret_key", env="COUPANG_SECRET_KEY")
     coupang_vendor_id = _get_cfg_value(cfg, "coupang", "vendor_id", env="COUPANG_VENDOR_ID")
-    if coupang_access and coupang_secret and coupang_vendor_id:
+    if coupang_enabled and coupang_access and coupang_secret and coupang_vendor_id:
         try:
             coupang = fetch_coupang_stock(
                 vendor_id=coupang_vendor_id,
