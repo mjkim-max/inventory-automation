@@ -287,11 +287,29 @@ def _build_sales_rows(snap: Dict[str, object]) -> List[Dict[str, object]]:
         coupang_key = coupang_by_name.get(name, "")
         coupang_qty = _safe_int(coupang_items.get(coupang_key, 0)) if coupang_key else 0
         smart_qty = _safe_int(smart_items.get(name, 0))
+        row_total = cafe_qty + smart_qty + coupang_qty
         total_cafe24 += cafe_qty
         total_coupang += coupang_qty
         total_smart += smart_qty
-        rows.append({"품목명": name, "CAFE24": cafe_qty, "스마트스토어": smart_qty, "쿠팡": coupang_qty})
-    rows.append({"품목명": "합계", "CAFE24": total_cafe24, "스마트스토어": total_smart, "쿠팡": total_coupang})
+        rows.append(
+            {
+                "품목명": name,
+                "CAFE24": cafe_qty,
+                "스마트스토어": smart_qty,
+                "쿠팡": coupang_qty,
+                "합계": row_total,
+            }
+        )
+    grand_total = total_cafe24 + total_smart + total_coupang
+    rows.append(
+        {
+            "품목명": "합계",
+            "CAFE24": total_cafe24,
+            "스마트스토어": total_smart,
+            "쿠팡": total_coupang,
+            "합계": grand_total,
+        }
+    )
     return rows
 
 
