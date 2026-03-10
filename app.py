@@ -51,7 +51,7 @@ SHEET_COLUMNS = {
     "note_silver": {"poomgo": "N", "ezadmin": "O", "coupang": "P"},
     "notepin_black": {"poomgo": "R", "ezadmin": "S", "coupang": "T"},
     "notepin_silver": {"poomgo": "V", "ezadmin": "W", "coupang": "X"},
-    "manual": {"poomgo": "Z", "ezadmin": "", "coupang": ""},
+    "manual": {"poomgo": "Z", "ezadmin": "AA", "coupang": ""},
 }
 
 SKU_LABELS = {
@@ -142,35 +142,59 @@ def _get_latest_sales_snapshot():
     values = _get_sales_values_cached()
     if len(values) < 2:
         return {}
+
+    today = _now_kst().strftime("%Y-%m-%d")
     latest_row = None
     latest_dt = None
+    today_row = None
+    today_dt = None
+
     for i, row in enumerate(values):
-        if i == 0:
+        if i == 0 or len(row) < 3:
             continue
-        if len(row) < 3:
-            continue
+
         raw_ts = row[1].strip()
         if not raw_ts:
             continue
+
         try:
             dt = datetime.strptime(raw_ts, "%Y-%m-%d %H:%M:%S")
         except Exception:
             continue
+
+        payload = {}
+        payload_json = row[2].strip() if len(row) > 2 else ""
+        if payload_json:
+            try:
+                payload = json.loads(payload_json)
+            except Exception:
+                payload = {}
+
+        payload_date = _normalize_sales_date(str(payload.get("date", "")))
+
         if latest_dt is None or dt > latest_dt:
             latest_dt = dt
             latest_row = row
-    if not latest_row:
+
+        if payload_date == today and (today_dt is None or dt > today_dt):
+            today_dt = dt
+            today_row = row
+
+    selected_row = today_row or latest_row
+    if not selected_row:
         return {}
-    payload_json = latest_row[2].strip() if len(latest_row) > 2 else ""
+
+    payload_json = selected_row[2].strip() if len(selected_row) > 2 else ""
     payload = {}
     if payload_json:
         try:
             payload = json.loads(payload_json)
         except Exception:
             payload = {}
+
     now_kst = _now_kst()
     return {
-        "fetched_at": latest_row[1].strip(),
+        "fetched_at": selected_row[1].strip(),
         "date": payload.get("date", "-"),
         "cafe24_sales_qty": payload.get("cafe24_sales_qty", "-"),
         "coupang_sales_qty": payload.get("coupang_sales_qty", "-"),
@@ -180,6 +204,95 @@ def _get_latest_sales_snapshot():
         "smartstore_items": payload.get("smartstore_items", {}),
         "view_time": now_kst.strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def _normalize_sales_date(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        return datetime.fromisoformat(raw).strftime("%Y-%m-%d")
+    except Exception:
+        return raw.split(" ")[0]
+
+
+def _snapshot_from_sales_row(row: List[str]) -> Dict[str, object]:
+    payload = {}
+    if len(row) > 2 and row[2].strip():
+        try:
+            payload = json.loads(row[2].strip())
+        except Exception:
+            payload = {}
+    return {
+        "fetched_at": row[1].strip() if len(row) > 1 else "",
+        "date": payload.get("date", "-"),
+        "cafe24_sales_qty": payload.get("cafe24_sales_qty", "-"),
+        "coupang_sales_qty": payload.get("coupang_sales_qty", "-"),
+        "smartstore_sales_qty": payload.get("smartstore_sales_qty", "-"),
+        "cafe24_items": payload.get("cafe24_items", {}),
+        "coupang_items": payload.get("coupang_items", {}),
+        "smartstore_items": payload.get("smartstore_items", {}),
+    }
+
+
+def _get_sales_snapshot_by_date(target_date: str) -> Dict[str, object]:
+    values = _get_sales_values_cached()
+    if len(values) < 2:
+        return {}
+    best_row = None
+    best_ts = ""
+    for i, row in enumerate(values):
+        if i == 0 or len(row) < 3:
+            continue
+        snap = _snapshot_from_sales_row(row)
+        snap_date = _normalize_sales_date(str(snap.get("date", "")))
+        if snap_date != target_date:
+            continue
+        fetched_at = str(snap.get("fetched_at", ""))
+        if not best_row or fetched_at >= best_ts:
+            best_row = row
+            best_ts = fetched_at
+    if not best_row:
+        return {}
+    return _snapshot_from_sales_row(best_row)
+
+
+def _build_sales_rows(snap: Dict[str, object]) -> List[Dict[str, object]]:
+    label_map = {
+        "P00000CL000E": "플라우드 노트 / 블랙",
+        "P00000CL000I": "플라우드 노트 / 실버",
+        "P00000DN000M": "플라우드 노트 Pro / 블랙",
+        "P00000DN000N": "플라우드 노트 Pro / 실버",
+        "P00000CT000U": "플라우드 노트핀S / 블랙",
+        "P00000CT000V": "플라우드 노트핀S / 실버",
+    }
+    coupang_map = {
+        "94199205555": "플라우드 노트 Pro / 블랙",
+        "94199205552": "플라우드 노트 Pro / 실버",
+        "90737907302": "플라우드 노트 / 블랙",
+        "90737907295": "플라우드 노트 / 실버",
+        "91942294087": "플라우드 노트핀S / 블랙",
+        "91942294096": "플라우드 노트핀S / 실버",
+    }
+    coupang_by_name = {v: k for k, v in coupang_map.items()}
+    items = snap.get("cafe24_items", {}) if isinstance(snap, dict) else {}
+    coupang_items = snap.get("coupang_items", {}) if isinstance(snap, dict) else {}
+    smart_items = snap.get("smartstore_items", {}) if isinstance(snap, dict) else {}
+    rows = []
+    total_cafe24 = 0
+    total_coupang = 0
+    total_smart = 0
+    for code, name in label_map.items():
+        cafe_qty = _safe_int(items.get(code, 0))
+        coupang_key = coupang_by_name.get(name, "")
+        coupang_qty = _safe_int(coupang_items.get(coupang_key, 0)) if coupang_key else 0
+        smart_qty = _safe_int(smart_items.get(name, 0))
+        total_cafe24 += cafe_qty
+        total_coupang += coupang_qty
+        total_smart += smart_qty
+        rows.append({"품목명": name, "CAFE24": cafe_qty, "스마트스토어": smart_qty, "쿠팡": coupang_qty})
+    rows.append({"품목명": "합계", "CAFE24": total_cafe24, "스마트스토어": total_smart, "쿠팡": total_coupang})
+    return rows
 
 
 def _load_sales_history(days: int = 90) -> Dict[str, Dict[str, int]]:
@@ -948,25 +1061,6 @@ def main() -> None:
 
 
     st.subheader("판매수량")
-    try:
-        st.session_state["sales_snapshot"] = _get_latest_sales_snapshot()
-    except Exception:
-        st.session_state["sales_snapshot"] = {}
-
-    snap = st.session_state.get("sales_snapshot", {})
-    snap_date = snap.get("date", "-") if isinstance(snap, dict) else "-"
-    now_kst = _now_kst()
-    if snap_date and snap_date != "-":
-        # Normalize to YYYY-MM-DD if payload already includes time
-        try:
-            parsed = datetime.fromisoformat(str(snap_date).strip())
-            snap_date = parsed.strftime("%Y-%m-%d")
-        except Exception:
-            snap_date = str(snap_date).split(" ")[0]
-        sales_label = f"{snap_date} {now_kst.strftime('%H:%M')}"
-    else:
-        sales_label = "-"
-    st.subheader(f"최근 데이터: {sales_label}")
 
     def _sales_status(value) -> str:
         if value is None:
@@ -977,61 +1071,47 @@ def main() -> None:
             return "수집실패"
         return "수집완료"
 
-    sales_status_line = (
-        f"CAFE24 : {_sales_status(snap.get('cafe24_sales_qty', '-'))}   ㅣ   "
-        f"스마트스토어 : {_sales_status(snap.get('smartstore_sales_qty', '-'))}   ㅣ   "
-        f"쿠팡 : {_sales_status(snap.get('coupang_sales_qty', '-'))}"
-    )
-    st.caption(sales_status_line)
-    label_map = {
-        "P00000CL000E": "플라우드 노트 / 블랙",
-        "P00000CL000I": "플라우드 노트 / 실버",
-        "P00000DN000M": "플라우드 노트 Pro / 블랙",
-        "P00000DN000N": "플라우드 노트 Pro / 실버",
-        "P00000CT000U": "플라우드 노트핀S / 블랙",
-        "P00000CT000V": "플라우드 노트핀S / 실버",
-    }
-    coupang_map = {
-        "94199205555": "플라우드 노트 Pro / 블랙",
-        "94199205552": "플라우드 노트 Pro / 실버",
-        "90737907302": "플라우드 노트 / 블랙",
-        "90737907295": "플라우드 노트 / 실버",
-        "91942294087": "플라우드 노트핀S / 블랙",
-        "91942294096": "플라우드 노트핀S / 실버",
-    }
-    coupang_by_name = {v: k for k, v in coupang_map.items()}
-    items = snap.get("cafe24_items", {}) if isinstance(snap, dict) else {}
-    coupang_items = snap.get("coupang_items", {}) if isinstance(snap, dict) else {}
-    smart_items = snap.get("smartstore_items", {}) if isinstance(snap, dict) else {}
-    rows = []
-    total_cafe24 = 0
-    total_coupang = 0
-    total_smart = 0
-    for code, name in label_map.items():
-        cafe_qty = _safe_int(items.get(code, 0))
-        coupang_key = coupang_by_name.get(name, "")
-        coupang_qty = _safe_int(coupang_items.get(coupang_key, 0)) if coupang_key else 0
-        smart_qty = _safe_int(smart_items.get(name, 0))
-        total_cafe24 += cafe_qty
-        total_coupang += coupang_qty
-        total_smart += smart_qty
-        rows.append(
-            {
-                "품목명": name,
-                "CAFE24": cafe_qty,
-                "스마트스토어": smart_qty,
-                "쿠팡": coupang_qty,
-            }
+    today = _now_kst().strftime("%Y-%m-%d")
+    try:
+        today_snap = _get_sales_snapshot_by_date(today)
+    except Exception:
+        today_snap = {}
+
+    st.subheader(f"오늘 데이터: {today}")
+    if not today_snap:
+        st.caption("오늘 수집 데이터가 없습니다.")
+        st.dataframe(_build_sales_rows({}), use_container_width=True, hide_index=True)
+    else:
+        sales_status_line = (
+            f"CAFE24 : {_sales_status(today_snap.get('cafe24_sales_qty', '-'))}   ㅣ   "
+            f"스마트스토어 : {_sales_status(today_snap.get('smartstore_sales_qty', '-'))}   ㅣ   "
+            f"쿠팡 : {_sales_status(today_snap.get('coupang_sales_qty', '-'))}"
         )
-    rows.append(
-        {
-            "품목명": "합계",
-            "CAFE24": total_cafe24,
-            "스마트스토어": total_smart,
-            "쿠팡": total_coupang,
-        }
-    )
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.caption(sales_status_line)
+        t_fetched_at = str(today_snap.get("fetched_at", "")).strip()
+        if t_fetched_at:
+            st.caption(f"수집시각: {t_fetched_at}")
+        st.dataframe(_build_sales_rows(today_snap), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    yesterday = (_now_kst() - timedelta(days=1)).strftime("%Y-%m-%d")
+    y_snap = _get_sales_snapshot_by_date(yesterday)
+    st.subheader(f"어제 데이터: {yesterday}")
+    if not y_snap:
+        st.caption("어제 확정 데이터가 없습니다. (매일 00:10 수집 예정)")
+        st.dataframe(_build_sales_rows({}), use_container_width=True, hide_index=True)
+    else:
+        y_sales_status_line = (
+            f"CAFE24 : {_sales_status(y_snap.get('cafe24_sales_qty', '-'))}   ㅣ   "
+            f"스마트스토어 : {_sales_status(y_snap.get('smartstore_sales_qty', '-'))}   ㅣ   "
+            f"쿠팡 : {_sales_status(y_snap.get('coupang_sales_qty', '-'))}"
+        )
+        st.caption(y_sales_status_line)
+        y_fetched_at = str(y_snap.get("fetched_at", "")).strip()
+        if y_fetched_at:
+            st.caption(f"수집시각: {y_fetched_at}")
+        st.dataframe(_build_sales_rows(y_snap), use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":

@@ -59,6 +59,7 @@ SKU_COLUMN_MAP = {
     "00359": "O",  # 노트 실버 (이지어드민)
     "00362": "S",  # 노트핀S 블랙 (이지어드민)
     "00363": "W",  # 노트핀S 실버 (이지어드민)
+    "00371": "AA",  # 사용설명서 (이지어드민)
 }
 
 # Poomgo columns (품고)
@@ -524,6 +525,19 @@ def _col_to_index(col: str) -> int:
     return idx
 
 
+def _ensure_sheet_columns(ws, target_cols: List[str]) -> None:
+    valid = [c for c in target_cols if c and str(c).strip()]
+    if not valid:
+        return
+    need = max(_col_to_index(c) for c in valid)
+    try:
+        current = int(ws.col_count)
+    except Exception:
+        current = 26
+    if need > current:
+        ws.add_cols(need - current)
+
+
 def _find_or_create_date_row(ws, date_str: str, target_cols: List[str], *, overwrite: bool = True) -> int:
     all_values = ws.get_all_values()
     col_idx = _col_to_index(DATE_COLUMN)
@@ -697,10 +711,12 @@ def fetch_coupang_stock(*, vendor_id: str, access_key: str, secret_key: str) -> 
     host = "https://api-gateway.coupang.com"
     path = f"/v2/providers/rg_open_api/apis/api/v1/vendors/{vendor_id}/rg/inventory/summaries"
     result: Dict[str, int] = {}
+    vendor_item_to_sku = {str(v): k for k, v in COUPANG_VENDOR_ITEM_MAP.items()}
     last_response = None
-
-    for sku, vendor_item_id in COUPANG_VENDOR_ITEM_MAP.items():
-        query = urllib.parse.urlencode({"vendorItemId": vendor_item_id})
+    last_error = ""
+    next_token = ""
+    while True:
+        query = urllib.parse.urlencode({"nextToken": next_token}) if next_token else ""
         auth = _coupang_auth(access_key, secret_key, "GET", path, query)
         headers = {
             "Authorization": auth,
@@ -708,37 +724,46 @@ def fetch_coupang_stock(*, vendor_id: str, access_key: str, secret_key: str) -> 
             "X-MARKET": "KR",
             "Content-Type": "application/json;charset=UTF-8",
         }
-        url = f"{host}{path}?{query}"
+        url = f"{host}{path}?{query}" if query else f"{host}{path}"
         for attempt in range(1, 4):
             try:
                 resp = requests.get(url, headers=headers, timeout=20)
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    body = (resp.text or "").strip().replace("\n", " ")
+                    raise RuntimeError(f"HTTP {resp.status_code}: {body[:220]}")
                 data = resp.json()
                 last_response = data
                 items = data.get("data") or []
-                qty = None
                 for item in items:
-                    if str(item.get("vendorItemId")) == vendor_item_id:
-                        inv = item.get("inventoryDetails") or {}
-                        qty = (
-                            inv.get("totalOrderableQuantity")
-                            if isinstance(inv, dict)
-                            else None
-                        )
-                        if qty is None:
-                            qty = item.get("availableStock", item.get("onHandStock", item.get("quantity")))
-                        break
-                if qty is not None:
+                    vendor_item_id = str(item.get("vendorItemId", "")).strip()
+                    if not vendor_item_id:
+                        continue
+                    sku = vendor_item_to_sku.get(vendor_item_id, "")
+                    if not sku:
+                        continue
+                    inv = item.get("inventoryDetails") or {}
+                    qty = (
+                        inv.get("totalOrderableQuantity")
+                        if isinstance(inv, dict)
+                        else None
+                    )
+                    if qty is None:
+                        qty = item.get("availableStock", item.get("onHandStock", item.get("quantity")))
                     try:
                         result[sku] = int(float(qty))
                     except Exception:
                         pass
+                next_token = str(data.get("nextToken", "") or "").strip()
                 break
-            except Exception:
+            except Exception as e:
+                last_error = str(e)
                 if attempt < 3:
                     time.sleep(2 * attempt)
                 else:
-                    continue
+                    next_token = ""
+                    break
+        if not next_token:
+            break
     if not result:
         debug_dir = Path(__file__).resolve().parents[1] / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
@@ -749,6 +774,8 @@ def fetch_coupang_stock(*, vendor_id: str, access_key: str, secret_key: str) -> 
             )
         except Exception:
             pass
+        if last_error:
+            print(f"[WARN] 쿠팡 재고 조회 결과 없음: {last_error}")
     return result
 
 
@@ -809,10 +836,12 @@ def main() -> None:
 
     ws = _connect_sheet(cfg)
     today = datetime.now().strftime("%Y-%m-%d")
+    target_cols_all = list(SKU_COLUMN_MAP.values()) + list(POOMGO_COLUMN_MAP.values()) + list(COUPANG_COLUMN_MAP.values())
+    _ensure_sheet_columns(ws, target_cols_all)
     row_idx = _find_or_create_date_row(
         ws,
         today,
-        list(SKU_COLUMN_MAP.values()) + list(POOMGO_COLUMN_MAP.values()) + list(COUPANG_COLUMN_MAP.values()),
+        target_cols_all,
         overwrite=True,
     )
 

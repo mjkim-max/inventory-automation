@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta
+import re
+import urllib.parse
+from datetime import date as date_cls, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import time
@@ -39,6 +41,25 @@ try:
     import pybase64
 except Exception:  # pragma: no cover
     pybase64 = None  # type: ignore[assignment]
+try:
+    from playwright.sync_api import sync_playwright
+except Exception:  # pragma: no cover
+    sync_playwright = None  # type: ignore[assignment]
+
+try:
+    from coupang_auth import ensure_logged_in as coupang_ensure_logged_in
+except Exception:  # pragma: no cover
+    coupang_ensure_logged_in = None  # type: ignore[assignment]
+
+
+COUPANG_CANONICAL_ITEM_MAP: Dict[str, str] = {
+    "94199205555": "플라우드 노트 Pro / 블랙",
+    "94199205552": "플라우드 노트 Pro / 실버",
+    "90737907302": "플라우드 노트 / 블랙",
+    "90737907295": "플라우드 노트 / 실버",
+    "91942294087": "플라우드 노트핀S / 블랙",
+    "91942294096": "플라우드 노트핀S / 실버",
+}
 
 
 def _load_toml(path: Path) -> Dict[str, Any]:
@@ -130,13 +151,37 @@ def _upsert_sales_row(ws, *, date_str: str, fetched_at: str, payload_json: str) 
     ws.append_row([date_str, fetched_at, payload_json], value_input_option="USER_ENTERED")
 
 
-def _today_range_kst() -> tuple[str, str]:
+def _resolve_target_date_kst() -> str:
+    explicit = os.getenv("SALES_TARGET_DATE", "").strip()
+    if explicit:
+        try:
+            return datetime.strptime(explicit, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    try:
+        offset_days = int(os.getenv("SALES_TARGET_OFFSET_DAYS", "0").strip() or "0")
+    except Exception:
+        offset_days = 0
     if ZoneInfo:
         now = datetime.now(ZoneInfo("Asia/Seoul"))
     else:
         now = datetime.now()
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+    target = (now - timedelta(days=offset_days)).date()
+    return target.strftime("%Y-%m-%d")
+
+
+def _day_range_kst(target_date: str) -> tuple[str, str]:
+    try:
+        dt = datetime.strptime(target_date, "%Y-%m-%d")
+    except Exception:
+        if ZoneInfo:
+            dt = datetime.now(ZoneInfo("Asia/Seoul"))
+        else:
+            dt = datetime.now()
+    if ZoneInfo:
+        dt = dt.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+    start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = dt.replace(hour=23, minute=59, second=59, microsecond=0)
     return start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -249,63 +294,452 @@ def _coupang_auth(access_key: str, secret_key: str, method: str, path: str, quer
     return f"CEA algorithm=HmacSHA256, access-key={access_key}, signed-date={signed_date}, signature={signature}"
 
 
-def _coupang_sales_qty(vendor_id: str, access_key: str, secret_key: str) -> tuple[int, Dict[str, int]]:
-    # Use PO list query (by Minute) with status=ACCEPT (payment completed)
-    host = "https://api-gateway.coupang.com"
-    path = f"/v2/providers/openapi/apis/api/v5/vendors/{vendor_id}/ordersheets"
-    if ZoneInfo:
-        now = datetime.now(ZoneInfo("Asia/Seoul"))
-    else:
-        now = datetime.now()
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    end = now.replace(hour=23, minute=59, second=59, microsecond=0)
-    created_from = start.strftime("%Y-%m-%dT%H:%M") + "%2B09:00"
-    created_to = end.strftime("%Y-%m-%dT%H:%M") + "%2B09:00"
-    total_qty = 0
-    item_map = {
-        "94199205555": "플라우드 노트 Pro / 블랙",
-        "94199205552": "플라우드 노트 Pro / 실버",
-        "90737907302": "플라우드 노트 / 블랙",
-        "90737907295": "플라우드 노트 / 실버",
-        "91942294087": "플라우드 노트핀S / 블랙",
-        "91942294096": "플라우드 노트핀S / 실버",
+def _coupang_label_from_item_name(name: str) -> str:
+    text = (name or "").strip().lower()
+    if not text:
+        return ""
+    is_black = ("black" in text) or ("블랙" in text)
+    is_silver = ("silver" in text) or ("실버" in text)
+    if ("노트핀" in text) or ("notepin" in text):
+        if is_black:
+            return "플라우드 노트핀S / 블랙"
+        if is_silver:
+            return "플라우드 노트핀S / 실버"
+    if ("pro" in text) or ("프로" in text):
+        if is_black:
+            return "플라우드 노트 Pro / 블랙"
+        if is_silver:
+            return "플라우드 노트 Pro / 실버"
+    if ("노트" in text) or ("note" in text):
+        if is_black:
+            return "플라우드 노트 / 블랙"
+        if is_silver:
+            return "플라우드 노트 / 실버"
+    return ""
+
+
+def _coupang_growth_ui_sales_qty(
+    *,
+    dashboard_url: str,
+    profile_dir: str,
+    option_ids: List[str],
+    headless: bool,
+    target_date: str,
+) -> tuple[int, Dict[str, int]]:
+    if sync_playwright is None:
+        raise RuntimeError("playwright is not installed.")
+    if not dashboard_url:
+        raise RuntimeError("COUPANG_GROWTH_URL 설정이 필요합니다.")
+
+    alias_to_canonical = {
+        **{k: k for k in COUPANG_CANONICAL_ITEM_MAP.keys()},
+        # Current option id alias observed from API
+        "94199205553": "94199205555",
     }
-    item_qty = {k: 0 for k in item_map.keys()}
-    last_response = None
-    query = (
-        f"createdAtFrom={created_from}&createdAtTo={created_to}"
-        f"&searchType=timeFrame&status=ACCEPT"
+    item_qty = {k: 0 for k in COUPANG_CANONICAL_ITEM_MAP.keys()}
+    canonical_key_by_label = {label: key for key, label in COUPANG_CANONICAL_ITEM_MAP.items()}
+    option_filter = set(option_ids)
+
+    parsed = urllib.parse.urlparse(dashboard_url)
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    query["start_date"] = [target_date]
+    query["end_date"] = [target_date]
+    live_url = urllib.parse.urlunparse(
+        parsed._replace(query=urllib.parse.urlencode(query, doseq=True))
     )
-    auth = _coupang_auth(access_key, secret_key, "GET", path, query)
-    headers = {"Authorization": auth, "X-Requested-By": vendor_id}
-    url = f"{host}{path}?{query}"
-    resp = requests.get(url, headers=headers, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    last_response = data
-    orders = data.get("data") or []
-    for order in orders:
-        items = order.get("orderItems") or order.get("items") or []
-        for item in items:
+
+    launch_kwargs: Dict[str, Any] = {
+        "user_data_dir": profile_dir,
+        "headless": headless,
+    }
+    profile_name = os.getenv("COUPANG_GROWTH_PROFILE_NAME", "Profile 1").strip()
+    launch_args: List[str] = []
+    if profile_name:
+        launch_args.append(f"--profile-directory={profile_name}")
+    if os.getenv("COUPANG_GROWTH_USE_CHROME", "1").strip().lower() in {"1", "true", "yes", "y"}:
+        launch_kwargs["channel"] = "chrome"
+        launch_args.extend([
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process",
+        ])
+    if launch_args:
+        launch_kwargs["args"] = launch_args
+
+    dom_option_qty: Dict[str, int] = {}
+    api_option_qty: Dict[str, int] = {k: 0 for k in COUPANG_CANONICAL_ITEM_MAP.keys()}
+    api_total_units: Optional[int] = None
+
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(**launch_kwargs)
+        page = context.pages[0] if context.pages else context.new_page()
+        api_vendor_summary: Dict[str, Any] = {}
+        api_vi_detail: Dict[str, Any] = {}
+
+        def _on_response(resp) -> None:
+            nonlocal api_vendor_summary, api_vi_detail
+            url = resp.url or ""
+            if "/tenants/rfm-ss/api/business-insight/" not in url:
+                return
+            if resp.status != 200:
+                return
             try:
-                q = int(item.get("quantity", 0))
+                txt = resp.text()
+            except Exception:
+                return
+            if not txt or txt.lstrip().startswith("<!DOCTYPE"):
+                return
+            try:
+                data = json.loads(txt)
+            except Exception:
+                return
+            if "/business-insight/vendor-summary" in url and isinstance(data, dict):
+                api_vendor_summary = data
+            elif "/business-insight/vi-detail-search" in url and isinstance(data, dict):
+                api_vi_detail = data
+
+        page.on("response", _on_response)
+        page.goto(live_url, wait_until="domcontentloaded", timeout=60000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+        final_url = page.url
+        if coupang_ensure_logged_in is None:
+            context.close()
+            raise RuntimeError("coupang_auth 모듈 로드 실패")
+        coupang_ensure_logged_in(page, target_url=live_url, timeout_sec=90)
+        # Login redirect 후 판매분석 API 응답을 안정적으로 재수집
+        page.reload(wait_until="domcontentloaded", timeout=60000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+        page.wait_for_timeout(1000)
+        final_url = page.url
+
+        # Preferred path: parse backend JSON response captured from page requests.
+        try:
+            summary_metrics = (
+                api_vendor_summary.get("summaryMetrics", {})
+                if isinstance(api_vendor_summary, dict)
+                else {}
+            )
+            total_units_raw = summary_metrics.get("totalUnitsSold")
+            if total_units_raw is not None:
+                api_total_units = int(round(float(total_units_raw)))
+        except Exception:
+            api_total_units = None
+
+        vi_items = []
+        if isinstance(api_vi_detail, dict):
+            vi_items = api_vi_detail.get("vendorItems") or []
+        if isinstance(vi_items, list):
+            for vi in vi_items:
+                if not isinstance(vi, dict):
+                    continue
+                details = vi.get("vendorItemDetails") or {}
+                metrics = vi.get("businessInsightsMetricsResponse") or {}
+                raw_id = str(details.get("vendorItemId") or vi.get("vendorItemId") or "").strip()
+                item_name = str(
+                    details.get("itemName")
+                    or details.get("productName")
+                    or vi.get("itemName")
+                    or ""
+                )
+                qty_raw = metrics.get("totalUnitsSold")
+                try:
+                    qty = int(round(float(qty_raw)))
+                except Exception:
+                    qty = 0
+                if qty <= 0:
+                    continue
+                key = alias_to_canonical.get(raw_id, "")
+                if not key:
+                    label = _coupang_label_from_item_name(item_name)
+                    key = canonical_key_by_label.get(label, "")
+                if not key:
+                    continue
+                if option_filter and key not in option_filter:
+                    continue
+                api_option_qty[key] = api_option_qty.get(key, 0) + qty
+
+        # Prefer DOM extraction over regex to avoid capturing percentages (e.g., 142.86%).
+        dom_option_ids = sorted(option_filter or alias_to_canonical.keys())
+        try:
+            dom_map = page.evaluate(
+                """
+                ({ optionIds }) => {
+                  const wanted = new Set(optionIds || []);
+                  const seen = new Set();
+                  const orderedIds = [];
+                  for (const a of Array.from(document.querySelectorAll('a[href*="vendorItemId="]'))) {
+                    const href = a.getAttribute('href') || '';
+                    const m = href.match(/vendorItemId=(\\d+)/);
+                    const text = (a.textContent || '').replace(/\\s+/g, ' ').trim();
+                    if (!m || !text.includes('옵션 ID')) continue;
+                    const id = m[1];
+                    if (!wanted.has(id) || seen.has(id)) continue;
+                    seen.add(id);
+                    orderedIds.push(id);
+                  }
+
+                  const parseIntText = (text) => {
+                    const raw = (text || '').replace(/\\s+/g, ' ').trim();
+                    if (!raw || raw.includes('%')) return null;
+                    const m = raw.match(/([0-9][0-9,]*)/);
+                    if (!m) return null;
+                    const n = parseInt(m[1].replace(/,/g, ''), 10);
+                    return Number.isFinite(n) ? n : null;
+                  };
+
+                  const values = [];
+                  for (const el of Array.from(document.querySelectorAll('div,span,p'))) {
+                    const label = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+                    if (label !== '판매량') continue;
+                    const wrap = el.closest('div');
+                    const prev = wrap && wrap.previousElementSibling;
+                    const n = parseIntText(prev ? prev.textContent : '');
+                    if (n === null) continue;
+                    values.push(n);
+                  }
+
+                  // Values appear duplicated (desktop/mobile) and may include top-summary first.
+                  const dedup = [];
+                  for (const n of values) {
+                    if (dedup.length === 0 || dedup[dedup.length - 1] !== n) dedup.push(n);
+                  }
+                  const picks = dedup.slice(-orderedIds.length);
+                  const result = {};
+                  for (let i = 0; i < picks.length; i += 1) {
+                    result[orderedIds[i]] = picks[i];
+                  }
+                  return result;
+                }
+                """,
+                {"optionIds": dom_option_ids},
+            )
+        except Exception:
+            dom_map = {}
+        if isinstance(dom_map, dict):
+            for raw_id, qty in dom_map.items():
+                try:
+                    n = int(qty)
+                except Exception:
+                    continue
+                dom_option_qty[str(raw_id)] = max(0, n)
+
+        body = page.inner_text("body")
+        context.close()
+
+    if "xauth.coupang.com" in final_url or "wing.coupang.com/login" in final_url:
+        raise RuntimeError("쿠팡 Wing 로그인 세션이 없습니다. .venv/bin/python scripts/coupang_growth_login.py 로 1회 로그인 후 다시 실행하세요.")
+    if "Access Denied" in body and "xauth.coupang.com" in body:
+        raise RuntimeError("쿠팡 Wing 접근이 차단되었습니다(Access Denied). Growth 모드는 COUPANG_GROWTH_HEADLESS=0 + 로그인 세션이 필요합니다.")
+    if "판매자 로그인" in body or "판매자가 아니신가요?" in body or ("로그인" in body and "쿠팡" in body):
+        raise RuntimeError("쿠팡 Wing 로그인 세션이 없습니다. .venv/bin/python scripts/coupang_growth_login.py 로 1회 로그인 후 다시 실행하세요.")
+
+    total = 0
+    api_sum = sum(v for v in api_option_qty.values() if v > 0)
+    if api_sum > 0:
+        for key, qty in api_option_qty.items():
+            item_qty[key] += qty
+            total += qty
+        return total, item_qty
+    if api_total_units is not None and api_total_units > 0:
+        # Fallback if backend detail list is temporarily empty
+        return api_total_units, item_qty
+
+    if dom_option_qty:
+        for raw_id, qty in dom_option_qty.items():
+            if option_filter and raw_id not in option_filter:
+                continue
+            key = alias_to_canonical.get(raw_id, "")
+            if not key:
+                continue
+            item_qty[key] += qty
+            total += qty
+        if total > 0:
+            return total, item_qty
+
+    # Fallback: body regex parsing (skip values that look like percentages).
+    matches: List[tuple[str, str]] = []
+    for m in re.finditer(r"옵션 ID[:：]\s*(\d+)[\s\S]{0,800}?판매량\s*([0-9][0-9,]*)", body):
+        next_char = body[m.end(2): m.end(2) + 1]
+        if next_char in {".", "%"}:
+            continue
+        matches.append((m.group(1), m.group(2)))
+
+    if not matches:
+        debug_dir = Path(__file__).resolve().parents[1] / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        (debug_dir / "coupang_growth_body.txt").write_text(body, encoding="utf-8")
+        raise RuntimeError("그로스 화면에서 옵션 판매량을 찾지 못했습니다. debug/coupang_growth_body.txt 확인 필요.")
+    for raw_id, raw_qty in matches:
+        if option_filter and raw_id not in option_filter:
+            continue
+        key = alias_to_canonical.get(raw_id, "")
+        if not key:
+            continue
+        try:
+            qty = int(raw_qty.replace(",", ""))
+        except Exception:
+            qty = 0
+        item_qty[key] += qty
+        total += qty
+    return total, item_qty
+
+
+def _coupang_sales_qty(
+    vendor_id: str,
+    access_key: str,
+    secret_key: str,
+    *,
+    target_date: str,
+) -> tuple[int, Dict[str, int]]:
+    # Rocket Growth sales: use RG Order API (paid date, yyyymmdd).
+    host = "https://api-gateway.coupang.com"
+    path = f"/v2/providers/rg_open_api/apis/api/v1/vendors/{vendor_id}/rg/orders"
+    try:
+        target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+    except Exception:
+        if ZoneInfo:
+            target_dt = datetime.now(ZoneInfo("Asia/Seoul"))
+        else:
+            target_dt = datetime.now()
+    today_yyyymmdd = target_dt.strftime("%Y%m%d")
+    today_iso = target_dt.strftime("%Y-%m-%d")
+    lookback_days = 1
+    try:
+        lookback_days = max(0, int(os.getenv("COUPANG_PAID_LOOKBACK_DAYS", "1")))
+    except Exception:
+        lookback_days = 1
+    paid_date_from = (target_dt - timedelta(days=lookback_days)).strftime("%Y%m%d")
+    paid_date_to = today_yyyymmdd
+    total_qty = 0
+    canonical_item_map = COUPANG_CANONICAL_ITEM_MAP
+    alias_to_canonical = {
+        # Legacy vendorItemId
+        "94199205555": "94199205555",
+        "94199205552": "94199205552",
+        "90737907302": "90737907302",
+        "90737907295": "90737907295",
+        "91942294087": "91942294087",
+        "91942294096": "91942294096",
+        # Current vendorItemId observed from live responses
+        "94199205553": "94199205555",
+    }
+    canonical_key_by_label = {label: key for key, label in canonical_item_map.items()}
+    item_qty = {k: 0 for k in canonical_item_map.keys()}
+    orders: List[Dict[str, Any]] = []
+    responses = []
+    next_token = ""
+    while True:
+        query = f"paidDateFrom={paid_date_from}&paidDateTo={paid_date_to}"
+        if next_token:
+            query = f"{query}&nextToken={next_token}"
+        auth = _coupang_auth(access_key, secret_key, "GET", path, query)
+        headers = {
+            "Authorization": auth,
+            "X-Requested-By": vendor_id,
+            "X-MARKET": "KR",
+            "Content-Type": "application/json;charset=UTF-8",
+        }
+        url = f"{host}{path}?{query}"
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code >= 400:
+            body = (resp.text or "").strip().replace("\n", " ")
+            raise RuntimeError(f"Coupang RG Order API {resp.status_code}: {body[:300]}")
+        data = resp.json()
+        responses.append(data)
+        data_orders = data.get("data") or []
+        if isinstance(data_orders, list):
+            orders.extend(data_orders)
+        next_token = str(data.get("nextToken", "") or "").strip()
+        if not next_token:
+            break
+
+    unknown_vendor_items = set()
+    seen = set()
+
+    def _paid_day_iso(order: Dict[str, Any]) -> str:
+        raw = order.get("paidAt")
+        if raw is None:
+            return ""
+        try:
+            if isinstance(raw, (int, float)):
+                sec = float(raw)
+                if sec > 1e12:
+                    sec /= 1000.0
+                dt = datetime.fromtimestamp(sec, tz=ZoneInfo("Asia/Seoul") if ZoneInfo else None)
+                return dt.strftime("%Y-%m-%d")
+            txt = str(raw).strip()
+            if not txt:
+                return ""
+            if txt.isdigit():
+                sec = float(txt)
+                if sec > 1e12:
+                    sec /= 1000.0
+                dt = datetime.fromtimestamp(sec, tz=ZoneInfo("Asia/Seoul") if ZoneInfo else None)
+                return dt.strftime("%Y-%m-%d")
+            dt = datetime.fromisoformat(txt.replace("Z", "+00:00"))
+            if dt.tzinfo is not None and ZoneInfo:
+                dt = dt.astimezone(ZoneInfo("Asia/Seoul"))
+            return dt.strftime("%Y-%m-%d")
+        except Exception:
+            return ""
+
+    for order in orders:
+        if _paid_day_iso(order) != today_iso:
+            continue
+        order_id = str(order.get("orderId", "")).strip()
+        items = order.get("orderItems") or order.get("items") or []
+        for idx, item in enumerate(items):
+            try:
+                q = int(item.get("salesQuantity", item.get("shippingCount", item.get("quantity", 0))))
             except Exception:
                 q = 0
-            total_qty += q
             vendor_item_id = (
                 item.get("vendorItemId")
                 or item.get("sellerProductItemId")
                 or item.get("vendor_item_id")
             )
-            if vendor_item_id is not None:
-                key = str(vendor_item_id).strip()
-                if key in item_qty:
-                    item_qty[key] += q
+            key = str(vendor_item_id).strip() if vendor_item_id is not None else ""
+            dedupe_key = (order_id, idx, key, q)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            total_qty += q
+            if key in alias_to_canonical:
+                item_qty[alias_to_canonical[key]] += q
+                continue
+            item_name = str(
+                item.get("vendorItemName")
+                or item.get("vendorItemPackageName")
+                or item.get("sellerProductItemName")
+                or item.get("sellerProductName")
+                or ""
+            )
+            label = _coupang_label_from_item_name(item_name)
+            canonical_key = canonical_key_by_label.get(label, "")
+            if canonical_key:
+                item_qty[canonical_key] += q
+            elif key:
+                unknown_vendor_items.add(key)
     if total_qty == 0:
         debug_dir = Path(__file__).resolve().parents[1] / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
         (debug_dir / "coupang_ordersheets.json").write_text(
-            json.dumps(last_response or {}, ensure_ascii=False, indent=2),
+            json.dumps(
+                {
+                    "paidDateFrom": paid_date_from,
+                    "paidDateTo": paid_date_to,
+                    "today": today_iso,
+                    "responses": responses,
+                    "unknown_vendor_items": sorted(unknown_vendor_items),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
     return total_qty, item_qty
@@ -347,11 +781,16 @@ def _smartstore_token(
     return token
 
 
-def _smartstore_today_range_kst() -> tuple[str, str]:
+def _smartstore_day_range_kst(target_date: str) -> tuple[str, str]:
+    try:
+        now = datetime.strptime(target_date, "%Y-%m-%d")
+    except Exception:
+        if ZoneInfo:
+            now = datetime.now(ZoneInfo("Asia/Seoul"))
+        else:
+            now = datetime.now()
     if ZoneInfo:
-        now = datetime.now(ZoneInfo("Asia/Seoul"))
-    else:
-        now = datetime.now()
+        now = now.replace(tzinfo=ZoneInfo("Asia/Seoul"))
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end = now.replace(hour=23, minute=59, second=59, microsecond=0)
     # API expects yyyy-MM-dd'T'HH:mm:ss.SSSXXX (milliseconds with offset)
@@ -367,11 +806,11 @@ def _smartstore_today_range_kst() -> tuple[str, str]:
         return _fmt(start), _fmt(end)
 
 
-def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
+def _smartstore_fetch_product_orders(token: str, *, target_date: str) -> List[Dict[str, Any]]:
     # Fetch by pay date range (today only) to avoid pulling historical changes
     base = "https://api.commerce.naver.com/external"
     url = f"{base}/v1/pay-order/seller/product-orders"
-    pay_from, pay_to = _smartstore_today_range_kst()
+    pay_from, pay_to = _smartstore_day_range_kst(target_date)
     headers = {"Authorization": f"Bearer {token}"}
     params = {
         "from": pay_from,
@@ -435,6 +874,8 @@ def _smartstore_fetch_product_orders(token: str) -> List[Dict[str, Any]]:
 
 def _smartstore_sales_by_variant(
     product_orders: List[Dict[str, Any]],
+    *,
+    target_date: str,
 ) -> tuple[int, Dict[str, int]]:
     # Map Smartstore product/item ids to labels
     smart_map = {
@@ -453,7 +894,7 @@ def _smartstore_sales_by_variant(
     result: Dict[str, int] = {v: 0 for v in smart_map.values()}
     total_qty = 0
     include_status = {"PAYED", "DELIVERING", "DELIVERED", "PURCHASE_DECIDED"}
-    today_str = datetime.now(ZoneInfo("Asia/Seoul") if ZoneInfo else None).strftime("%Y-%m-%d")
+    today_str = target_date
 
     for order in product_orders:
         if not isinstance(order, dict):
@@ -511,7 +952,8 @@ def main() -> None:
     if not make_webhook or not cafe24_base:
         raise RuntimeError("cafe24.make_webhook / cafe24.base_url 설정이 필요합니다.")
 
-    start_date, end_date = _today_range_kst()
+    target_date = _resolve_target_date_kst()
+    start_date, end_date = _day_range_kst(target_date)
 
     cafe24_token = _fetch_make_token(make_webhook)
     orders = _cafe24_orders(cafe24_base, cafe24_token, start_date, end_date)
@@ -520,11 +962,42 @@ def main() -> None:
 
     coupang_qty = None
     coupang_items: Dict[str, int] = {}
+    coupang_source = _get_cfg_value(cfg, "coupang", "sales_source", env="COUPANG_SALES_SOURCE", default="rg_api")
+    coupang_source = coupang_source.strip().lower() or "rg_api"
     if coupang_vendor_id and coupang_access and coupang_secret:
         try:
-            coupang_qty, coupang_items = _coupang_sales_qty(
-                coupang_vendor_id, coupang_access, coupang_secret
-            )
+            if coupang_source == "growth_ui":
+                growth_url = _get_cfg_value(cfg, "coupang", "growth_url", env="COUPANG_GROWTH_URL")
+                option_ids_raw = _get_cfg_value(
+                    cfg,
+                    "coupang",
+                    "growth_option_ids",
+                    env="COUPANG_GROWTH_OPTION_IDS",
+                    default=",".join(COUPANG_CANONICAL_ITEM_MAP.keys()),
+                )
+                option_ids = [x.strip() for x in option_ids_raw.split(",") if x.strip()]
+                profile_dir = _get_cfg_value(
+                    cfg,
+                    "coupang",
+                    "growth_profile_dir",
+                    env="COUPANG_GROWTH_PROFILE_DIR",
+                    default="/Users/mune/Desktop/Cursor/sales_check_auto/profile",
+                )
+                headless = os.getenv("COUPANG_GROWTH_HEADLESS", "0").strip() in {"1", "true", "yes", "y"}
+                coupang_qty, coupang_items = _coupang_growth_ui_sales_qty(
+                    dashboard_url=growth_url,
+                    profile_dir=profile_dir,
+                    option_ids=option_ids,
+                    headless=headless,
+                    target_date=target_date,
+                )
+            else:
+                coupang_qty, coupang_items = _coupang_sales_qty(
+                    coupang_vendor_id,
+                    coupang_access,
+                    coupang_secret,
+                    target_date=target_date,
+                )
         except Exception as e:
             # If Coupang is not accessible (e.g., IP whitelist), skip and continue
             print(f"[WARN] 쿠팡 매출 조회 실패: {e}")
@@ -532,11 +1005,12 @@ def main() -> None:
             coupang_items = {}
 
     payload = {
-        "date": start_date,
+        "date": target_date,
         "cafe24_sales_qty": cafe24_qty,
         "cafe24_items": cafe24_by_variant,
         "coupang_sales_qty": coupang_qty,
         "coupang_items": coupang_items,
+        "coupang_sales_source": coupang_source,
         "smartstore_sales_qty": None,
         "smartstore_items": {},
     }
@@ -553,8 +1027,8 @@ def main() -> None:
                 token_type=smart_type,
                 account_id=smart_account,
             )
-            orders = _smartstore_fetch_product_orders(token)
-            smart_qty, smart_items = _smartstore_sales_by_variant(orders)
+            orders = _smartstore_fetch_product_orders(token, target_date=target_date)
+            smart_qty, smart_items = _smartstore_sales_by_variant(orders, target_date=target_date)
             payload["smartstore_sales_qty"] = smart_qty
             payload["smartstore_items"] = smart_items
         except Exception as e:
@@ -570,7 +1044,7 @@ def main() -> None:
         ws = _connect_sheet(cfg, readonly=False)
         _ensure_sales_header(ws)
         payload_json = json.dumps(payload, ensure_ascii=False)
-        date_str = fetched_at.split(" ")[0]
+        date_str = target_date
         _upsert_sales_row(ws, date_str=date_str, fetched_at=fetched_at, payload_json=payload_json)
         print(f"[INFO] Sales snapshot saved: {fetched_at}")
     except Exception as e:
