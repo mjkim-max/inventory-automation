@@ -796,13 +796,13 @@ def main() -> None:
         with st.form("add_inventory_form"):
             transfer_mode = st.radio(
                 "입고 형태",
-                ["신규 → 이지어드민", "이지어드민 → 품고"],
+                ["신규 → 이지어드민", "신규 → 품고"],
                 horizontal=True,
             )
             if transfer_mode == "신규 → 이지어드민":
                 from_channel, channel = "신규", "이지어드민"
             else:
-                from_channel, channel = "이지어드민", "품고"
+                from_channel, channel = "신규", "품고"
             date_value = st.date_input("날짜")
 
             base_rows = [{"품목명": v, "입고수량": 0} for v in SKU_LABELS.values()]
