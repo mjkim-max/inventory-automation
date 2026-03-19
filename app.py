@@ -25,22 +25,35 @@ def _now_kst() -> datetime:
 
 
 def _parse_kst(ts: str) -> datetime | None:
-    if not ts:
+    raw = str(ts or "").strip()
+    if not raw:
         return None
     dt = None
-    try:
-        dt = datetime.fromisoformat(ts.strip())
-    except Exception:
+    for parser in (
+        datetime.fromisoformat,
+        lambda value: datetime.strptime(value, "%Y-%m-%d %H:%M:%S"),
+        lambda value: datetime.strptime(value, "%Y-%m-%d %H:%M"),
+    ):
         try:
-            dt = datetime.strptime(ts.strip(), "%Y-%m-%d %H:%M:%S")
+            dt = parser(raw)
+            break
         except Exception:
-            return None
+            continue
+    if dt is None:
+        return None
     if _KST:
-        if dt.tzinfo is None and _UTC:
-            dt = dt.replace(tzinfo=_UTC).astimezone(_KST)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_KST)
         else:
             dt = dt.astimezone(_KST)
     return dt
+
+
+def _format_kst_label(ts: str, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    parsed = _parse_kst(ts)
+    if parsed:
+        return parsed.strftime(fmt)
+    return str(ts or "").strip()
 
 
 SHEET_COLUMNS = {
@@ -1106,7 +1119,7 @@ def main() -> None:
             f"쿠팡 : {_sales_status(today_snap.get('coupang_sales_qty', '-'))}"
         )
         st.caption(sales_status_line)
-        t_fetched_at = str(today_snap.get("fetched_at", "")).strip()
+        t_fetched_at = _format_kst_label(str(today_snap.get("fetched_at", "")).strip())
         if t_fetched_at:
             st.caption(f"수집시각: {t_fetched_at}")
         st.dataframe(_build_sales_rows(today_snap), use_container_width=True, hide_index=True)
@@ -1126,7 +1139,7 @@ def main() -> None:
             f"쿠팡 : {_sales_status(y_snap.get('coupang_sales_qty', '-'))}"
         )
         st.caption(y_sales_status_line)
-        y_fetched_at = str(y_snap.get("fetched_at", "")).strip()
+        y_fetched_at = _format_kst_label(str(y_snap.get("fetched_at", "")).strip())
         if y_fetched_at:
             st.caption(f"수집시각: {y_fetched_at}")
         st.dataframe(_build_sales_rows(y_snap), use_container_width=True, hide_index=True)
