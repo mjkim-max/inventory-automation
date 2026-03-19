@@ -115,6 +115,20 @@ def submit_login(page, login_id: str, login_pw: str) -> None:
     user = page.locator("#username")
     pw = page.locator("#password")
     if user.count() == 0 or pw.count() == 0:
+        try:
+            url = page.url or ""
+        except Exception:
+            url = ""
+        try:
+            title = page.title() or ""
+        except Exception:
+            title = ""
+        try:
+            body = page.inner_text("body")
+        except Exception:
+            body = ""
+        if "Access Denied" in title or ("Access Denied" in body and "xauth.coupang.com" in (url + body)):
+            raise RuntimeError("쿠팡 xauth Access Denied: headless 또는 현재 세션으로 로그인 페이지 접근이 차단되었습니다.")
         raise RuntimeError("쿠팡 로그인 입력 필드를 찾지 못했습니다.")
     user.first.click()
     user.first.fill(login_id)

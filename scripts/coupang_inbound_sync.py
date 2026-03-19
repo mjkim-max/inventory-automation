@@ -323,6 +323,126 @@ def _parse_detail(body: str, qty_field: str) -> Tuple[str, str, Dict[str, int]]:
     return inbound_id, inventory_date, option_qty
 
 
+def _should_retry_non_headless(exc: Exception) -> bool:
+    msg = str(exc)
+    return (
+        "Access Denied" in msg
+        or "로그인 입력 필드를 찾지 못했습니다." in msg
+        or "자동 로그인 후에도 로그인 페이지로 되돌아왔습니다." in msg
+    )
+
+
+def _sync_coupang_inbound_with_browser(
+    *,
+    cfg: Dict[str, Any],
+    conn: sqlite3.Connection,
+    ws,
+    inbound_list_url: str,
+    profile_dir: str,
+    profile_name: str,
+    max_process: int,
+    qty_field: str,
+    headless: bool,
+) -> Dict[str, Any]:
+    inserted_rows = 0
+    synced_ids = 0
+    failed_ids: List[str] = []
+    discovered_count = 0
+
+    with sync_playwright() as p:
+        args = [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process",
+        ]
+        if profile_name:
+            args.insert(0, f"--profile-directory={profile_name}")
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=profile_dir,
+            channel="chrome",
+            headless=headless,
+            args=args,
+        )
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+
+            page.goto(inbound_list_url, wait_until="domcontentloaded", timeout=90000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            if coupang_ensure_logged_in is None:
+                raise RuntimeError("coupang_auth 모듈 로드 실패")
+            coupang_ensure_logged_in(page, target_url=inbound_list_url, timeout_sec=90)
+
+            page.goto(inbound_list_url, wait_until="domcontentloaded", timeout=90000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            _wait_until_inbound_list_visible(page, timeout_ms=30000)
+
+            links = _collect_inbound_links(page)
+            discovered_count = len(links)
+            if not links:
+                return {
+                    "discovered": 0,
+                    "processed": 0,
+                    "inserted_rows": 0,
+                    "failed_ids": [],
+                }
+
+            _upsert_discovered_ids(conn, links)
+            targets = _select_targets(conn, max_process)
+
+            base = "https://wing.coupang.com"
+            for inbound_id, detail_href in targets:
+                detail_url = detail_href if detail_href.startswith("http") else f"{base}{detail_href}"
+                try:
+                    page.goto(detail_url, wait_until="domcontentloaded", timeout=90000)
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=15000)
+                    except Exception:
+                        pass
+                    body = page.inner_text("body")
+
+                    parsed_id, expected_date, option_qty = _parse_detail(body, qty_field=qty_field)
+                    if not parsed_id:
+                        parsed_id = inbound_id
+                    if not option_qty:
+                        raise RuntimeError(f"옵션별 '{qty_field}' 수량을 찾지 못했습니다.")
+
+                    _save_items(conn, parsed_id, option_qty)
+
+                    rows_to_append: List[List[Any]] = []
+                    for option_id, qty in option_qty.items():
+                        sku_name = OPTION_ID_TO_SKU.get(option_id, "")
+                        if not sku_name:
+                            continue
+                        rows_to_append.append([expected_date, "신규", "쿠팡", sku_name, int(qty)])
+                    if not rows_to_append:
+                        raise RuntimeError("시트 반영 가능한 옵션ID 매핑이 없습니다.")
+
+                    for r in rows_to_append:
+                        ws.append_row(r, value_input_option="USER_ENTERED")
+                        inserted_rows += 1
+
+                    _mark_synced(conn, parsed_id, expected_date)
+                    synced_ids += 1
+                except Exception as e:
+                    _mark_failed(conn, inbound_id, str(e))
+                    failed_ids.append(inbound_id)
+        finally:
+            context.close()
+
+    return {
+        "discovered": discovered_count,
+        "processed": synced_ids + len(failed_ids),
+        "synced_ids": synced_ids,
+        "inserted_rows": inserted_rows,
+        "failed_ids": failed_ids,
+    }
+
+
 def sync_coupang_inbound_to_sheet() -> Dict[str, Any]:
     cfg = _load_secrets()
     inbound_list_url = _get_cfg_value(
@@ -350,109 +470,36 @@ def sync_coupang_inbound_to_sheet() -> Dict[str, Any]:
     headless = os.getenv("COUPANG_INBOUND_HEADLESS", "0") == "1"
 
     conn = _open_db()
-    inserted_rows = 0
-    synced_ids = 0
-    failed_ids: List[str] = []
-    discovered_count = 0
-
     ws = _connect_add_inventory_sheet(cfg)
     _ensure_add_inventory_header(ws)
 
-    with sync_playwright() as p:
-        args = [
-            "--disable-blink-features=AutomationControlled",
-            "--disable-features=IsolateOrigins,site-per-process",
-        ]
-        if profile_name:
-            args.insert(0, f"--profile-directory={profile_name}")
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            channel="chrome",
+    try:
+        return _sync_coupang_inbound_with_browser(
+            cfg=cfg,
+            conn=conn,
+            ws=ws,
+            inbound_list_url=inbound_list_url,
+            profile_dir=profile_dir,
+            profile_name=profile_name,
+            max_process=max_process,
+            qty_field=qty_field,
             headless=headless,
-            args=args,
         )
-        page = context.pages[0] if context.pages else context.new_page()
-
-        page.goto(inbound_list_url, wait_until="domcontentloaded", timeout=90000)
-        try:
-            page.wait_for_load_state("networkidle", timeout=15000)
-        except Exception:
-            pass
-        if coupang_ensure_logged_in is None:
-            context.close()
-            raise RuntimeError("coupang_auth 모듈 로드 실패")
-        coupang_ensure_logged_in(page, target_url=inbound_list_url, timeout_sec=90)
-
-        # 로그인 완료 후 현재 페이지가 대시보드일 수 있어, 입고관리 페이지로 다시 이동한다.
-        page.goto(inbound_list_url, wait_until="domcontentloaded", timeout=90000)
-        try:
-            page.wait_for_load_state("networkidle", timeout=15000)
-        except Exception:
-            pass
-        _wait_until_inbound_list_visible(page, timeout_ms=30000)
-
-        links = _collect_inbound_links(page)
-        discovered_count = len(links)
-        if not links:
-            context.close()
-            return {
-                "discovered": 0,
-                "processed": 0,
-                "inserted_rows": 0,
-                "failed_ids": [],
-            }
-
-        _upsert_discovered_ids(conn, links)
-        targets = _select_targets(conn, max_process)
-
-        base = "https://wing.coupang.com"
-        for inbound_id, detail_href in targets:
-            detail_url = detail_href if detail_href.startswith("http") else f"{base}{detail_href}"
-            try:
-                page.goto(detail_url, wait_until="domcontentloaded", timeout=90000)
-                try:
-                    page.wait_for_load_state("networkidle", timeout=15000)
-                except Exception:
-                    pass
-                body = page.inner_text("body")
-
-                parsed_id, expected_date, option_qty = _parse_detail(body, qty_field=qty_field)
-                if not parsed_id:
-                    parsed_id = inbound_id
-                if not option_qty:
-                    raise RuntimeError(f"옵션별 '{qty_field}' 수량을 찾지 못했습니다.")
-
-                _save_items(conn, parsed_id, option_qty)
-
-                rows_to_append: List[List[Any]] = []
-                for option_id, qty in option_qty.items():
-                    sku_name = OPTION_ID_TO_SKU.get(option_id, "")
-                    if not sku_name:
-                        continue
-                    # Add_inventory convention: channel=입고(+), from_channel=출고(-)
-                    # 쿠팡 입고 동기화는 입고만 기록해야 하므로 from_channel은 비쿠팡 값으로 둔다.
-                    rows_to_append.append([expected_date, "신규", "쿠팡", sku_name, int(qty)])
-                if not rows_to_append:
-                    raise RuntimeError("시트 반영 가능한 옵션ID 매핑이 없습니다.")
-
-                for r in rows_to_append:
-                    ws.append_row(r, value_input_option="USER_ENTERED")
-                    inserted_rows += 1
-
-                _mark_synced(conn, parsed_id, expected_date)
-                synced_ids += 1
-            except Exception as e:
-                _mark_failed(conn, inbound_id, str(e))
-                failed_ids.append(inbound_id)
-        context.close()
-
-    return {
-        "discovered": discovered_count,
-        "processed": synced_ids + len(failed_ids),
-        "synced_ids": synced_ids,
-        "inserted_rows": inserted_rows,
-        "failed_ids": failed_ids,
-    }
+    except Exception as exc:
+        if headless and _should_retry_non_headless(exc):
+            print(f"[WARN] headless inbound sync failed, retrying with visible browser: {exc}")
+            return _sync_coupang_inbound_with_browser(
+                cfg=cfg,
+                conn=conn,
+                ws=ws,
+                inbound_list_url=inbound_list_url,
+                profile_dir=profile_dir,
+                profile_name=profile_name,
+                max_process=max_process,
+                qty_field=qty_field,
+                headless=False,
+            )
+        raise
 
 
 def main() -> None:
