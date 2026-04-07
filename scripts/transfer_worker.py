@@ -229,6 +229,34 @@ def _update_row(ws, row_idx: int, header_idx: Dict[str, int], *,
         ws.update_cell(row_idx, sheet_col, sheet_name)
 
 
+def _parse_dt(raw: str) -> datetime | None:
+    try:
+        return datetime.strptime(_norm_str(raw), "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def _read_row_state(ws, row_idx: int, header_idx: Dict[str, int]) -> Dict[str, str]:
+    try:
+        row = ws.row_values(row_idx)
+    except Exception:
+        return {}
+    return {
+        "status": _get(row, header_idx.get("status", -1)),
+        "message": _get(row, header_idx.get("message", -1)),
+        "updated_at": _get(row, header_idx.get("updated_at", -1)),
+        "external_id": _get(row, header_idx.get("external_id", -1)),
+    }
+
+
+def _env_int(name: str, default: int, minimum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except Exception:
+        value = default
+    return max(minimum, value)
+
+
 def _poomgo_headers(token: str) -> Dict[str, str]:
     if not token:
         return {}
@@ -265,11 +293,12 @@ def _poomgo_create_receiving(
         "destination_warehouse": destination_warehouse,
         "resources": resources,
     }
+    timeout_sec = _env_int("POOMGO_RECEIVING_TIMEOUT_SEC", 180, 30)
     headers = _poomgo_headers(token)
-    resp = requests.put(url, headers=headers, json=payload, timeout=30)
+    resp = requests.put(url, headers=headers, json=payload, timeout=timeout_sec)
     if resp.status_code in {401, 403} and not token.lower().startswith("bearer "):
         headers = _poomgo_headers(f"Bearer {token}")
-        resp = requests.put(url, headers=headers, json=payload, timeout=30)
+        resp = requests.put(url, headers=headers, json=payload, timeout=timeout_sec)
     if resp.status_code >= 400:
         raise RuntimeError(f"poomgo error {resp.status_code}: {resp.text[:200]}")
     return resp.json()
@@ -279,11 +308,12 @@ def _poomgo_cancel_receiving(*, token: str, receiving_id: str) -> None:
     if requests is None:
         raise RuntimeError("requests is not installed.")
     url = f"https://api.poomgo.com/open-api/wms/receiving-sheets/{receiving_id}"
+    timeout_sec = _env_int("POOMGO_CANCEL_TIMEOUT_SEC", 60, 10)
     headers = _poomgo_headers(token)
-    resp = requests.delete(url, headers=headers, timeout=30)
+    resp = requests.delete(url, headers=headers, timeout=timeout_sec)
     if resp.status_code in {401, 403} and not token.lower().startswith("bearer "):
         headers = _poomgo_headers(f"Bearer {token}")
-        resp = requests.delete(url, headers=headers, timeout=30)
+        resp = requests.delete(url, headers=headers, timeout=timeout_sec)
     if resp.status_code >= 400:
         raise RuntimeError(f"poomgo error {resp.status_code}: {resp.text[:200]}")
 
@@ -537,7 +567,17 @@ def _run_once() -> None:
                 )
             continue
 
-        if status not in {"", "PENDING", "EZADMIN_DONE"}:
+        updated_at_raw = _norm_str(_get(row, header_idx.get("updated_at", -1)))
+        processing_stale_sec = _env_int("POOMGO_PROCESSING_STALE_SEC", 900, 60)
+        is_stale_processing = False
+        if status == "PROCESSING":
+            updated_dt = _parse_dt(updated_at_raw)
+            if updated_dt is None:
+                is_stale_processing = True
+            else:
+                is_stale_processing = (datetime.now() - updated_dt).total_seconds() >= processing_stale_sec
+
+        if status not in {"", "PENDING", "EZADMIN_DONE"} and not is_stale_processing:
             continue
 
         if to_channel != "품고":
@@ -626,7 +666,22 @@ def _run_once() -> None:
         arrive_at = depart_at
         resources = [{"barcode": barcode, "quantity": qty}]
 
+        lock_token = f"poomgo-lock:{row_idx}:{int(time.time())}:{os.getpid()}"
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _update_row(
+            ws,
+            row_idx,
+            header_idx,
+            status="PROCESSING",
+            message=lock_token,
+            updated_at=now,
+        )
+        live_state = _read_row_state(ws, row_idx, header_idx)
+        if live_state.get("external_id"):
+            continue
+        if live_state.get("status") != "PROCESSING" or live_state.get("message") != lock_token:
+            continue
+
         try:
             resp = _poomgo_create_receiving(
                 token=poomgo_token,
@@ -647,7 +702,7 @@ def _run_once() -> None:
                 header_idx,
                 status="SUCCESS",
                 message=f"poomgo_id={rid}" if rid else "poomgo_created",
-                updated_at=now,
+                updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 external_id=rid,
             )
         except Exception as e:
@@ -657,7 +712,7 @@ def _run_once() -> None:
                 header_idx,
                 status="FAILED",
                 message=str(e)[:200],
-                updated_at=now,
+                updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
 
 

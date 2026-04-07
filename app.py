@@ -1027,7 +1027,9 @@ def main() -> None:
                             key_simple = (str(date_val), str(from_ch), str(to_ch), str(sku), str(qty))
                             status = tq_status_simple.get(key_simple, {}).get("status", "")
                         status_label = status if status else "-"
-                        if status == "CANCEL_PENDING":
+                        if status == "PROCESSING":
+                            status_label = "처리중"
+                        elif status == "CANCEL_PENDING":
                             status_label = "취소중"
                         elif status == "CANCELLED":
                             status_label = "취소완료"
